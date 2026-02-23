@@ -4,11 +4,14 @@
 /******************************************************************************
  * ESP32 TWAI
  *****************************************************************************/
-#define TWAI_BUS_0_TX GPIO_NUM_16
-#define TWAI_BUS_0_RX GPIO_NUM_17
+//#define TWAI_BUS_0_TX GPIO_NUM_16
+//#define TWAI_BUS_0_RX GPIO_NUM_17
 
 //#define TWAI_BUS_0_TX GPIO_NUM_13
 //#define TWAI_BUS_0_RX GPIO_NUM_12
+
+#define TWAI_BUS_0_TX GPIO_NUM_33
+#define TWAI_BUS_0_RX GPIO_NUM_32
 
 #define TWAI_BUS_1_TX GPIO_NUM_14
 #define TWAI_BUS_1_RX GPIO_NUM_15
