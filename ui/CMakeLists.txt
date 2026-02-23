@@ -4,7 +4,7 @@ include(FetchContent)
 project(MyProject LANGUAGES C CXX)
 
 # Build an executable called "MyFirmware"
-add_executable(MyFirmware main.c lv_font_montserrat_12_ukrainian.c)
+add_executable(MyFirmware main.c) #lv_font_montserrat_12_ukrainian.c)
 
 # Specify path to own LVGL config header
 set(LV_CONF_PATH
