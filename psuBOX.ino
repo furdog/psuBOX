@@ -5,18 +5,24 @@ struct psu_box_ui ui;
 /******************************************************************************
  * PSU
  *****************************************************************************/
+#define PSU_FAN_CONTROL_PIN 25
+
 char psu_dev_info_str[0xFF];
 bool psu_dev_info_conn_established = false;
 
 //#define TBCM_360_3000_HE_DRI_LOG(v) {printf v;}
 #include "tbcm_360_3000_he_dri.h"
 #include "delta_time.h"
+#include "fan_ctl.h"
 
 struct delta_time dt;
 struct tbcm_360_3000_he_dri tbcm_dri;
 
 void setup_psuBOX()
 {
+	pinMode(PSU_FAN_CONTROL_PIN, OUTPUT);
+	digitalWrite(PSU_FAN_CONTROL_PIN, LOW);
+
 	Serial.begin(921600);
 
 	esp32_twai_init(&twai_bus_0);
@@ -99,6 +105,13 @@ void loop_psuBOX()
 	default:
 		break;
 	}
+
+	/* Control fan speed based on temp. See fan_ctl.h for detail */
+	uint16_t pwm_duty = fan_control(
+			tbcm_360_3000_he_dri_get_out_temp1(&tbcm_dri),
+			tbcm_360_3000_he_dri_get_out_temp2(&tbcm_dri));
+
+	analogWrite(PSU_FAN_CONTROL_PIN, pwm_duty);
 }
 
 /******************************************************************************

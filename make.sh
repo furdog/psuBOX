@@ -73,9 +73,15 @@ compile() {
 
 	echo "Testing..."
 
-	# Setup tools and libraries
 	cd ui
 	./make.sh
+	if [[ $? -ne 0 ]]; then
+	    echo "FATAL ERROR: Test failed."
+	    exit 1
+	fi
+	cd ..
+	cd fan_ctl
+	make format misra test
 	if [[ $? -ne 0 ]]; then
 	    echo "FATAL ERROR: Test failed."
 	    exit 1
@@ -96,6 +102,7 @@ compile() {
 		#cp ui/lv_font_montserrat_12_ukrainian.c build/
 		#cp ui/lv_font_montserrat_14_ukrainian.c build/
 		cp ui/psu_box_ui.h build/
+		cp fan_ctl/fan_ctl.h build/
 	fi
 	cp *.csv build/
 
