@@ -156,6 +156,7 @@ void psu_box_ui_evt_enabled(lv_event_t * e)
 
 	if (code == LV_EVENT_SHORT_CLICKED) {
 		self->charging_enabled = false;
+		psu_box_ui_charge_enabled_update(self);
 	}
 
 	if (code == LV_EVENT_PRESSED) {
