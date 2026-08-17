@@ -1,8 +1,17 @@
 #include "lvgl.h"
 
+#define PSU_BOX_ARM_DURATION 1000u
+
 /******************************************************************************
  * CLASS
  *****************************************************************************/
+enum psu_box_ui_arm_state {
+	PSU_BOX_UI_STATE_DISABLED,
+	PSU_BOX_UI_STATE_PRE_ARMED,
+	PSU_BOX_UI_STATE_ARMED,
+	PSU_BOX_UI_STATE_ENABLED
+};
+
 struct psu_box_ui {
 	float min_voltage_V;
 	float max_voltage_V;
@@ -15,6 +24,8 @@ struct psu_box_ui {
 
 	float out_voltage_V;
 	float out_current_A;
+
+	enum psu_box_ui_arm_state arm_state;
 
 	bool charging_enabled;
 
@@ -31,6 +42,8 @@ struct psu_box_ui {
 	lv_obj_t *lbl_current_set;
 
 	lv_obj_t *btn_enabled;
+
+	lv_obj_t *progress_bar;
 
 	uint8_t _press_accel;
 };
@@ -145,6 +158,46 @@ void psu_box_ui_evt_current_minus(lv_event_t * e)
 	}
 }
 
+/* Progress BAR start (used to indicate ARM success) */
+void psu_box_ui_progress_bar_start(struct psu_box_ui *self)
+{
+	static lv_style_t style_bg;
+	static lv_style_t style_indic;
+
+	lv_style_init(&style_bg);
+	lv_style_set_border_color(&style_bg, lv_palette_main(LV_PALETTE_GREEN));
+	lv_style_set_border_width(&style_bg, 2);
+	lv_style_set_pad_all(&style_bg, 6); /*To make the indicator smaller*/
+	lv_style_set_radius(&style_bg, 6);
+	lv_style_set_anim_duration(&style_bg, PSU_BOX_ARM_DURATION);
+
+	lv_style_init(&style_indic);
+	lv_style_set_bg_opa(&style_indic, LV_OPA_COVER);
+	lv_style_set_bg_color(&style_indic, lv_palette_main(LV_PALETTE_RED));
+	lv_style_set_radius(&style_indic, 3);
+
+	if (self->progress_bar == NULL) {
+		self->progress_bar = lv_bar_create(lv_screen_active());
+	}
+
+	lv_obj_remove_style_all(self->progress_bar); /*To have a clean start*/
+	lv_obj_add_style(self->progress_bar, &style_bg, 0);
+	lv_obj_add_style(self->progress_bar, &style_indic, LV_PART_INDICATOR);
+
+	lv_obj_set_size(self->progress_bar, 200, 10);
+	lv_obj_set_pos(self->progress_bar, 60, 64);
+	lv_bar_set_value(self->progress_bar, 100, LV_ANIM_ON);
+}
+
+/* Progress BAR stop (removes bar at all)*/
+void psu_box_ui_progress_bar_stop(struct psu_box_ui *self)
+{
+	if (self->progress_bar != NULL) {
+		lv_obj_delete(self->progress_bar);
+		self->progress_bar = NULL;
+	}
+}
+
 void psu_box_ui_evt_enabled(lv_event_t * e)
 {
 	struct psu_box_ui *self = (struct psu_box_ui *)
@@ -154,23 +207,40 @@ void psu_box_ui_evt_enabled(lv_event_t * e)
 	lv_obj_t *btn        = lv_event_get_target_obj(e);
 	lv_obj_t *label      = lv_obj_get_child(btn, 0);
 
-	if (code == LV_EVENT_SHORT_CLICKED) {
-		self->charging_enabled = false;
-		psu_box_ui_charge_enabled_update(self);
-	}
-
+	/* This event always happens after button press */
 	if (code == LV_EVENT_PRESSED) {
-		lv_obj_set_style_bg_color(btn, lv_color_hex(0xFF7700), 0);
-		lv_label_set_text(label, "ARM");
+		if (self->arm_state == PSU_BOX_UI_STATE_DISABLED) {
+			self->arm_state = PSU_BOX_UI_STATE_PRE_ARMED;
+			lv_obj_set_style_bg_color(btn, lv_color_hex(0xFF7700), 0);
+			lv_label_set_text(label, "ARM");
+			psu_box_ui_progress_bar_start(self);
+		} else {
+			self->arm_state = PSU_BOX_UI_STATE_DISABLED;
+			self->charging_enabled = false;
+		}
 	}
 
+	/* This event always happens after long press */
 	if (code == LV_EVENT_LONG_PRESSED) {
-		self->charging_enabled = true;
-		psu_box_ui_charge_enabled_update(self);
+		if (self->arm_state == PSU_BOX_UI_STATE_PRE_ARMED) {
+			self->arm_state = PSU_BOX_UI_STATE_ARMED;
+		}
 	}
 
+	/* This event always happens after release */
 	if (code == LV_EVENT_RELEASED) {
+		if (self->arm_state == PSU_BOX_UI_STATE_ARMED) {
+			self->arm_state = PSU_BOX_UI_STATE_ENABLED;
+			self->charging_enabled = true;
+		} else {
+			self->arm_state = PSU_BOX_UI_STATE_DISABLED;
+		}
+
 		psu_box_ui_charge_enabled_update(self);
+
+		if (self->charging_enabled == false) {
+			psu_box_ui_progress_bar_stop(self);
+		}
 	}
 }
 
@@ -336,11 +406,15 @@ void psu_box_ui_init(struct psu_box_ui *self)
 	self->out_voltage_V = 0.0f;
 	self->out_current_A = 0.0f;
 
+	self->arm_state = PSU_BOX_UI_STATE_DISABLED;
+
 	self->charging_enabled = false;
 
 	self->_press_accel = 1U;
 
 	psu_box_ui_create(self);
+
+	self->progress_bar = NULL;
 }
 
 /* UI update */

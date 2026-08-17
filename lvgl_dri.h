@@ -87,6 +87,8 @@ void lvgl_dri_setup()
 
 	/* Initialize the (dummy) input device driver */
 	lv_indev_t * indev = lv_indev_create();
+	lv_indev_set_long_press_time(indev, PSU_BOX_ARM_DURATION);
+
 	/* Touchpad should have POINTER type */
 	lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
 	lv_indev_set_read_cb(indev, my_touchpad_read);
