@@ -59,4 +59,13 @@ else
 	(git clone "$REPO_URL")
 fi
 
+REPO_URL="https://github.com/furdog/charge_counter.git"
+DEST_DIR="$(basename "$REPO_URL" .git)"
+echo "$REPO_URL"
+if [ -d "$DEST_DIR" ]; then
+	(cd "$DEST_DIR" && git pull)
+else
+	(git clone -b "v0.3.2" "$REPO_URL")
+fi
+
 cd ..

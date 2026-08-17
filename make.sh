@@ -99,6 +99,7 @@ compile() {
 		cp psuBOX.ino build/build.ino
 		cp *.h build/
 		cp libraries/eltek_valere_psu/*.h build/
+		cp libraries/charge_counter/*.h build/
 		#cp ui/lv_font_montserrat_12_ukrainian.c build/
 		#cp ui/lv_font_montserrat_14_ukrainian.c build/
 		cp ui/psu_box_ui.h build/

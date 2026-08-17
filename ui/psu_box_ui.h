@@ -24,6 +24,7 @@ struct psu_box_ui {
 
 	float out_voltage_V;
 	float out_current_A;
+	uint32_t total_wh; /* Watt hours counted total */
 
 	enum psu_box_ui_arm_state arm_state;
 
@@ -379,11 +380,11 @@ void psu_box_ui_create(struct psu_box_ui *self)
 	/* Measured stats */
 	label = lv_label_create(root);
 	lv_obj_set_pos(label, 320/4, 80);
-	lv_obj_set_size(label, 130, 150);
+	lv_obj_set_size(label, 140, 150);
 	lv_obj_set_style_text_color(label, lv_color_hex(0x44FF44),
 				    LV_PART_MAIN);
 	lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_RIGHT, 0);
-	lv_obj_set_style_text_font(label, &mono_font, 0);
+	lv_obj_set_style_text_font(label, &mono_font_small, 0);
 
 	self->lbl_stats_out = label;
 	psu_box_ui_stats_update(self);
@@ -405,6 +406,7 @@ void psu_box_ui_init(struct psu_box_ui *self)
 
 	self->out_voltage_V = 0.0f;
 	self->out_current_A = 0.0f;
+	self->total_wh      = 0U;
 
 	self->arm_state = PSU_BOX_UI_STATE_DISABLED;
 
@@ -425,10 +427,11 @@ void psu_box_ui_info_update(struct psu_box_ui *self, const char *info)
 
 void psu_box_ui_stats_update(struct psu_box_ui *self)
 {
-	lv_label_set_text_fmt(self->lbl_stats_out, "% 3d V\n% 3d A\n% 3d W\n",
+	lv_label_set_text_fmt(self->lbl_stats_out, "% 3d V \n% 3d A \n% 3d W \n% 3d Wh\n",
 			      (int)self->out_voltage_V,
 			      (int)self->out_current_A,
-			     (int)(self->out_voltage_V * self->out_current_A));
+			      (int)(self->out_voltage_V * self->out_current_A),
+			      (int)self->total_wh);
 }
 
 void psu_box_ui_voltage_setter_update(struct psu_box_ui *self)

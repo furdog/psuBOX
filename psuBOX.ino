@@ -15,8 +15,15 @@ bool psu_dev_info_conn_established = false;
 #include "delta_time.h"
 #include "fan_ctl.h"
 
+#define CHARGE_COUNTER_IMPL
+#include "charge_counter.h"
+
 struct delta_time dt;
 struct tbcm_360_3000_he_dri tbcm_dri;
+
+/* Charge counter (coloumb counter) watt/hours */
+struct chgc chgc;
+struct chgc_config chgc_cfg;
 
 void setup_psuBOX()
 {
@@ -32,6 +39,17 @@ void setup_psuBOX()
 	tbcm_360_3000_he_dri_init(&tbcm_dri);
 
 	psu_dev_info_str[0] = '\0';
+
+	/* Charger counter config */
+	chgc_init(&chgc);
+
+	chgc_cfg.max_energy_wh      = 99999;
+	chgc_cfg.update_interval_ms = 100u;
+	chgc_cfg.multiplier_V       = 10u;
+	chgc_cfg.multiplier_A       = 10u;
+	chgc_cfg.report_timeout_ms  = 500u;
+
+	chgc_set_config(&chgc, chgc_cfg);
 }
 
 void loop_psuBOX()
@@ -111,6 +129,14 @@ void loop_psuBOX()
 			tbcm_360_3000_he_dri_get_out_temp1(&tbcm_dri),
 			tbcm_360_3000_he_dri_get_out_temp2(&tbcm_dri));
 
+	if (psu_dev_info_conn_established) {
+		chgc_set_voltage_V(&chgc, 10.0f *
+			tbcm_360_3000_he_dri_get_out_voltage_V(&tbcm_dri));
+		chgc_set_current_A(&chgc, 10.0f *
+			tbcm_360_3000_he_dri_get_out_current_A(&tbcm_dri));
+		chgc_update(&chgc, delta_time_ms); 
+	}
+
 	analogWrite(PSU_FAN_CONTROL_PIN, pwm_duty);
 }
 
@@ -141,6 +167,8 @@ void loop(void)
 			tbcm_360_3000_he_dri_get_out_voltage_V(&tbcm_dri);
 		ui.out_current_A =
 			tbcm_360_3000_he_dri_get_out_current_A(&tbcm_dri);
+
+		ui.total_wh = chgc_get_energy_wh(&chgc);
 	} else {
 		ui.out_voltage_V = 0;
 		ui.out_current_A = 0;
