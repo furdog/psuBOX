@@ -129,7 +129,11 @@ void loop_psuBOX()
 			tbcm_360_3000_he_dri_get_out_temp1(&tbcm_dri),
 			tbcm_360_3000_he_dri_get_out_temp2(&tbcm_dri));
 
-	if (psu_dev_info_conn_established) {
+	if (psu_dev_info_conn_established &&	
+	    /* Dirty hack to prevent 0xFFFF values...
+	     * Temporary solution, must be fixed properly in
+	     * tbcm driver. TODO, FIXME */
+	    ((tbcm_dri._reader.rflags & 8U) > 0U)) {
 		chgc_set_voltage_V(&chgc, 10.0f *
 			tbcm_360_3000_he_dri_get_out_voltage_V(&tbcm_dri));
 		chgc_set_current_A(&chgc, 10.0f *
