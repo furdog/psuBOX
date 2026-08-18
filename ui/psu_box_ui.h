@@ -45,6 +45,7 @@ struct psu_box_ui {
 	lv_obj_t *btn_enabled;
 
 	lv_obj_t *progress_bar;
+	lv_obj_t *status_led;
 
 	uint8_t _press_accel;
 };
@@ -218,6 +219,7 @@ void psu_box_ui_evt_enabled(lv_event_t * e)
 		} else {
 			self->arm_state = PSU_BOX_UI_STATE_DISABLED;
 			self->charging_enabled = false;
+			lv_obj_set_style_bg_color(self->status_led, lv_palette_main(LV_PALETTE_RED), 0);
 		}
 	}
 
@@ -233,6 +235,7 @@ void psu_box_ui_evt_enabled(lv_event_t * e)
 		if (self->arm_state == PSU_BOX_UI_STATE_ARMED) {
 			self->arm_state = PSU_BOX_UI_STATE_ENABLED;
 			self->charging_enabled = true;
+			lv_obj_set_style_bg_color(self->status_led, lv_palette_main(LV_PALETTE_GREEN), 0);
 		} else {
 			self->arm_state = PSU_BOX_UI_STATE_DISABLED;
 		}
@@ -376,18 +379,24 @@ void psu_box_ui_create(struct psu_box_ui *self)
 	self->btn_enabled = btn;
 	psu_box_ui_charge_enabled_update(self);
 
-
 	/* Measured stats */
 	label = lv_label_create(root);
-	lv_obj_set_pos(label, 320/4, 80);
-	lv_obj_set_size(label, 140, 150);
+	lv_obj_set_pos(label, 30, 80);
+	lv_obj_set_size(label, 230, 150);
 	lv_obj_set_style_text_color(label, lv_color_hex(0x44FF44),
 				    LV_PART_MAIN);
 	lv_obj_set_style_text_align(label, LV_TEXT_ALIGN_RIGHT, 0);
-	lv_obj_set_style_text_font(label, &mono_font_small, 0);
+	lv_obj_set_style_text_font(label, &mono_font, 0);
 
 	self->lbl_stats_out = label;
 	psu_box_ui_stats_update(self);
+
+	/* Status led */
+	self->status_led = lv_obj_create(lv_scr_act());
+	lv_obj_set_pos(self->status_led, 230, 15);
+	lv_obj_set_size(self->status_led , 20, 20);
+	lv_obj_set_style_radius(self->status_led, LV_RADIUS_CIRCLE, 0);
+	lv_obj_set_style_bg_color(self->status_led, lv_palette_main(LV_PALETTE_RED), 0);
 }
 
 /******************************************************************************
@@ -427,7 +436,7 @@ void psu_box_ui_info_update(struct psu_box_ui *self, const char *info)
 
 void psu_box_ui_stats_update(struct psu_box_ui *self)
 {
-	lv_label_set_text_fmt(self->lbl_stats_out, "% 3d V \n% 3d A \n% 3d W \n% 3d Wh\n",
+	lv_label_set_text_fmt(self->lbl_stats_out, "% 3dV % 3dA \n% 3dW \n% 3dWh\n",
 			      (int)self->out_voltage_V,
 			      (int)self->out_current_A,
 			      (int)(self->out_voltage_V * self->out_current_A),
