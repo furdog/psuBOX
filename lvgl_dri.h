@@ -57,9 +57,14 @@ void my_touchpad_read(lv_indev_t * indev, lv_indev_data_t * data)
 
 		/* Bug in lvgl code makes touch rotated by 90deg... */
 		/* It's actually point.y */
-		data->point.x = TFT_HOR_RES - 1 - y;
-		data->point.y = x; /* It's actually point.x */
 
+		//Uncomment in case if touch is not rotated by 180
+		//data->point.x = TFT_HOR_RES - 1 - y;
+		//data->point.y = x; /* It's actually point.x */
+
+		/** In case if touch is rotated by 180 deg */
+		data->point.x = y;
+		data->point.y = TFT_VER_RES - 1 - x;
 	}
 }
 
