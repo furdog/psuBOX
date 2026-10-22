@@ -23,6 +23,7 @@
 #ifndef HUAPSU_H
 #define HUAPSU_H
 
+#include <assert.h>
 #include <stdbool.h>
 #include <stddef.h>
 #include <stdint.h>
@@ -32,6 +33,7 @@
 #define HUAPSU_MAX_TX_FRAMES 8U
 #define HUAPSU_DATA_REQUEST_INTERVAL_MS 100U
 #define HUAPSU_PARAM_ID_SET_INTERVAL_MS 1000U
+#define HUAPSU_MAX_ENTRIES 0xFFU
 
 enum huapsu_hw_variant {
 	HUAPSU_HW_VARIANT_R33640G1,
@@ -115,7 +117,7 @@ struct huapsu_meta {
 struct huapsu_val_entry {
 	struct huapsu_meta meta;
 
-	uint32_t value;
+	int32_t	 value;
 	uint16_t bits_per_unit;
 	bool	 dirty;
 };
@@ -147,8 +149,10 @@ struct huapsu {
 
 	struct huapsu_frame rx_frame;
 
-	struct huapsu_frame tx_frames[HUAPSU_MAX_TX_FRAMES];
-	struct huapsu_frame tx_count;
+	/** Param entries queue for send.
+	 *  The value stores index to value in param_entries[] */
+	uint8_t param_tx_queue[HUAPSU_PARAM_ID_COUNT];
+	uint8_t param_tx_count;
 
 	bool online; /**< PSU is reported to be online. */
 	bool busy;   /**< Should not yield. */
@@ -172,24 +176,45 @@ extern const struct huapsu_meta	  g_huapsu_data_meta[HUAPSU_DATA_ID_COUNT];
 extern const struct huapsu_config g_huapsu_config_r33640g1;
 extern const struct huapsu_config g_huapsu_config_r4875g1;
 
+/** Initializes main instance. Hardware variant must be specified. */
 void huapsu_init(struct huapsu *self, enum huapsu_hw_variant variant);
 
+/** Push RX frame into driver.
+ *  Returns true on success and false if frame is already queued. */
 bool huapsu_push_rx_frame(struct huapsu		    *self,
 			  const struct huapsu_frame *frame);
 
+/** Pop TX frame from the driver.
+ *  Returns false if there are no frames left to pop. */
+bool huapsu_pop_tx_frame(struct huapsu *self, struct huapsu_frame *frame);
+
+/** Updates all internal timers. Should only be called on
+    HUAPSU_EVENT_REQ_TIME event */
 void huapsu_update_deltatime(struct huapsu *self, uint32_t delta_time_ms);
 
+/** Main fsm routine. Must be called in while loop until busy flag
+ *  is set to true. */
 uint8_t huapsu_step(struct huapsu *self);
 
+/** FSM is busy and shall continue its work. */
 bool huapsu_is_busy(struct huapsu *self);
 
+/** Get pointer to an param entry.
+    Provide valid ID. May return NULL on failure. */
 struct huapsu_val_entry *huapsu_get_param_entry(struct huapsu *self,
 						uint8_t	       param_id);
 
-bool huapsu_set_param(struct huapsu_val_entry *self, int32_t value);
+/** Set param of a valid entry. */
+bool huapsu_set_param(struct huapsu *self, struct huapsu_val_entry *entry,
+		      int32_t value);
+
+/** Get pointer to a data entry. May return NULL in case if data entry is
+ *  not available (has never been received) or if ID is invalid. */
+struct huapsu_val_entry *huapsu_get_data_entry(struct huapsu *self,
+					       uint8_t	      param_id);
 
 #ifndef HUAPSU_NO_IMPL
-/* huapsu_param_id metadata array (Values 0 to 4) */
+/** huapsu_param_id metadata array (Values 0 to 4). */
 const struct huapsu_meta g_huapsu_param_meta[HUAPSU_PARAM_ID_COUNT] = {
     {	   "Online output voltage", "V"},
     {	  "Offline output voltage", "V"},
@@ -198,8 +223,8 @@ const struct huapsu_meta g_huapsu_param_meta[HUAPSU_PARAM_ID_COUNT] = {
     {"Offline current limit ratio",  ""}
 };
 
-/* huapsu_data_id metadata array (Indexed from 0x70U to 0x83U, with gaps
- * filled) */
+/** huapsu_data_id metadata array (Indexed from 0x70U to 0x83U, with gaps
+ * filled). */
 const struct huapsu_meta g_huapsu_data_meta[HUAPSU_DATA_ID_COUNT] = {
     {		    "Input power",  "W"}, /* 0x70 */
     {		"Input frequency", "Hz"}, /* 0x71 */
@@ -224,7 +249,7 @@ const struct huapsu_config g_huapsu_config_r4875g1 = {
 
 /** Maps param ID into continuous, flat range without gaps.
  *  Starts from 0. Returns 0xFFU in case of bad vid */
-uint8_t huapsu_map_param_slot(uint8_t vid)
+uint8_t huapsu_map_param_id_to_slot(uint8_t vid)
 {
 	const uint8_t invalid_id  = 0xFFU;
 	const uint8_t range_start = 0x00U;
@@ -239,9 +264,25 @@ uint8_t huapsu_map_param_slot(uint8_t vid)
 	return result;
 }
 
+/** Map slot number into param id (same as above, but reversed). */
+uint8_t huapsu_map_slot_to_param_id(uint8_t vid)
+{
+	const uint8_t invalid_id  = 0xFFU;
+	const uint8_t range_start = 0x00U;
+	const uint8_t range_end	  = 0x04U;
+
+	uint8_t result = invalid_id;
+
+	if ((vid >= range_start) && (vid <= range_end)) {
+		result = vid + range_start;
+	}
+
+	return result;
+}
+
 /** Maps data ID into continuous, flat range without gaps.
  *  Starts from 0. Returns 0xFFU in case of bad vid */
-uint8_t huapsu_map_data_slot(uint8_t vid)
+uint8_t huapsu_map_data_id_to_slot(uint8_t vid)
 {
 	const uint8_t invalid_id = 0xFFU;
 
@@ -322,7 +363,7 @@ void huapsu_record_error(struct huapsu *self, uint8_t err_code)
 	self->err_state = self->state;
 }
 
-int32_t huapsu_extract_value_from_frame(const struct huapsu_frame *frame)
+int32_t huapsu_decode_value(const struct huapsu_frame *frame)
 {
 	/** Value starts at 5th byte and has 32bit length.
 	 *  Big-endian order (MSB goes first). */
@@ -337,12 +378,30 @@ int32_t huapsu_extract_value_from_frame(const struct huapsu_frame *frame)
 	return value;
 }
 
+void huapsu_encode_value(struct huapsu_frame *frame, int32_t value)
+{
+	/* Offset within frame data */
+	const uint8_t ofs = 4U;
+
+	/* Encoded value */
+	const uint32_t enc0 = ((uint32_t)value >> 24U) & 0xFFU;
+	const uint32_t enc1 = ((uint32_t)value >> 16U) & 0xFFU;
+	const uint32_t enc2 = ((uint32_t)value >> 8U) & 0xFFU;
+	const uint32_t enc3 = ((uint32_t)value >> 0U) & 0xFFU;
+
+	/* Put it into frame data */
+	frame->data[ofs + 0U] = enc0;
+	frame->data[ofs + 1U] = enc1;
+	frame->data[ofs + 2U] = enc2;
+	frame->data[ofs + 3U] = enc3;
+}
+
 struct huapsu_val_entry *huapsu_get_param_entry(struct huapsu *self,
 						uint8_t	       param_id)
 {
 	struct huapsu_val_entry *entry = NULL;
 
-	uint8_t slot = huapsu_map_param_slot(param_id);
+	uint8_t slot = huapsu_map_param_id_to_slot(param_id);
 
 	if (slot != (uint8_t)-1) {
 		entry = &self->param_entries[slot];
@@ -351,14 +410,25 @@ struct huapsu_val_entry *huapsu_get_param_entry(struct huapsu *self,
 	return entry;
 }
 
-bool huapsu_set_param(struct huapsu_val_entry *self, int32_t value)
+bool huapsu_set_param(struct huapsu *self, struct huapsu_val_entry *entry,
+		      int32_t value)
 {
 	bool success = false;
 
-	if (self != NULL) {
-		self->value = value;
-		self->dirty = true;
-		success	    = true;
+	if (entry != NULL) {
+		/* Extract slot id from pointer. TODO MISRA compliance */
+		uint8_t slot = entry - self->param_entries;
+
+		/* Add this to param to the TX queue.
+		 * This can be done only once. Until frame is popped. */
+		if (!entry->dirty) {
+			self->param_tx_queue[self->param_tx_count] = slot;
+			self->param_tx_count++;
+		}
+
+		entry->dirty = true;
+		entry->value = value;
+		success	     = true;
 	}
 
 	return success;
@@ -372,7 +442,7 @@ bool huapsu_parse_param_frame(struct huapsu		*self,
 	uint8_t param_id = frame->data[1U];
 	uint8_t slot	 = 0U;
 
-	const int32_t value = huapsu_extract_value_from_frame(frame);
+	const int32_t value = huapsu_decode_value(frame);
 
 	self->last_answ_code = frame->data[0U];
 	self->last_msg_id    = frame->data[1U];
@@ -380,7 +450,7 @@ bool huapsu_parse_param_frame(struct huapsu		*self,
 	if (self->last_answ_code == (uint8_t)HUAPSU_ANSW_CODE_OK) {
 		success = true;
 
-		slot = huapsu_map_param_slot(param_id);
+		slot = huapsu_map_param_id_to_slot(param_id);
 		if (slot != (uint8_t)-1) {
 			self->param_entries[slot].value = value;
 		} else {
@@ -391,6 +461,22 @@ bool huapsu_parse_param_frame(struct huapsu		*self,
 	}
 
 	return success;
+}
+
+struct huapsu_val_entry *huapsu_get_data_entry(struct huapsu *self,
+					       uint8_t	      param_id)
+{
+	struct huapsu_val_entry *entry = NULL;
+
+	uint8_t slot = huapsu_map_data_id_to_slot(param_id);
+
+	/* We should alway check for dirty flag.
+	 * Otherwise value is not considered to be safe for read. */
+	if (slot != (uint8_t)-1 && self->data_entries[slot].dirty) {
+		entry = &self->data_entries[slot];
+	}
+
+	return entry;
 }
 
 bool huapsu_parse_data_frame(struct huapsu	       *self,
@@ -407,10 +493,12 @@ bool huapsu_parse_data_frame(struct huapsu	       *self,
 	if (self->last_answ_code == (uint8_t)HUAPSU_ANSW_CODE_OK) {
 		success = true;
 
-		slot = huapsu_map_data_slot(data_id);
+		slot = huapsu_map_data_id_to_slot(data_id);
 		if (slot != (uint8_t)-1) {
 			self->data_entries[slot].value =
-			    huapsu_extract_value_from_frame(frame);
+			    huapsu_decode_value(frame);
+
+			self->data_entries[slot].dirty = true;
 		} else {
 			huapsu_record_error(self, HUAPSU_ERR_INVALID_DATA_ID);
 			success = false;
@@ -452,8 +540,6 @@ bool huapsu_parse_input_frame(struct huapsu		*self,
 	return success;
 }
 
-/** Push RX frame into driver.
- *  Returns true on success and false if frame is already queued. */
 bool huapsu_push_rx_frame(struct huapsu		    *self,
 			  const struct huapsu_frame *frame)
 {
@@ -462,8 +548,38 @@ bool huapsu_push_rx_frame(struct huapsu		    *self,
 	if (self->rx_frame.dlc < 0) {
 		self->rx_frame = *frame;
 		success	       = true;
-	} else {
-		success = false;
+	}
+
+	return success;
+}
+
+bool huapsu_pop_tx_frame(struct huapsu *self, struct huapsu_frame *frame)
+{
+	bool success = false;
+
+	if (self->param_tx_count > 0U) {
+		const uint8_t slot =
+		    self->param_tx_queue[self->param_tx_count - 1U];
+		const uint8_t pid = huapsu_map_slot_to_param_id(slot);
+
+		struct huapsu_val_entry *entry = NULL;
+
+		/* TODO this should not happen at all */
+		if (pid != (uint8_t)-1) {
+			entry = &self->param_entries[slot];
+
+			frame->id      = HUAPSU_MSG_ID_PARAM_SET;
+			frame->dlc     = HUAPSU_FRAME_MAX_LEN;
+			frame->data[0] = 0x01U;
+			frame->data[1] = pid;
+			frame->data[2] = 0x00U;
+			frame->data[3] = 0x00U;
+
+			huapsu_encode_value(frame, entry->value);
+		}
+
+		self->param_tx_count--;
+		success = true;
 	}
 
 	return success;
@@ -498,7 +614,6 @@ uint8_t huapsu_state_rx(struct huapsu *self)
 	return event;
 }
 
-/** TODO */
 uint8_t huapsu_state_tx(struct huapsu *self)
 {
 	enum huapsu_event event = HUAPSU_EVENT_NONE;
