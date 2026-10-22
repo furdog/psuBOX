@@ -1,5 +1,5 @@
 /**
- * @file bite.h
+ * @file huawei_psu.h
  * @brief Huawei Rectfer Module driver (Hardware-Agnostic)
  *
  * Protocol CAN2.0
@@ -7,10 +7,11 @@
  * Extended frames used
  *
  * Supported devices:
- * - R33640G1
+ * - R33640G1 max: 400V, 37A (40A ?)
+ * - R4875G1  max: 58V,  75A
  *
  * ```LICENSE
- * Copyright (c) 2025 furdog <https://github.com/furdog>
+ * Copyright (c) 2026 furdog <https://github.com/furdog>
  *
  * SPDX-License-Identifier: 0BSD
  * ```
@@ -23,11 +24,14 @@
 #define HUAPSU_H
 
 #include <stdbool.h>
+#include <stddef.h>
 #include <stdint.h>
 
 /** Default current calibration multiplier. */
-#define HUAPSU_DEF_CUR_CAL_MUL 27U
 #define HUAPSU_FRAME_MAX_LEN 8U
+#define HUAPSU_MAX_TX_FRAMES 8U
+#define HUAPSU_DATA_REQUEST_INTERVAL_MS 100U
+#define HUAPSU_PARAM_ID_SET_INTERVAL_MS 1000U
 
 enum huapsu_hw_variant {
 	HUAPSU_HW_VARIANT_R33640G1,
@@ -46,8 +50,9 @@ enum huapsu_answ_code {
 	HUAPSU_ANSW_CODE_ERR = 0x21U
 };
 
-enum huapsu_err_code {
+enum huapsu_err {
 	HUAPSU_ERR_NONE,
+	HUAPSU_ERR_INVALID_ANSWER,
 	HUAPSU_ERR_INVALID_ID,
 	HUAPSU_ERR_INVALID_DLC,
 	HUAPSU_ERR_INVALID_DATA_ID
@@ -67,31 +72,52 @@ enum huapsu_msg_id {
 	HUAPSU_MSG_ID_PARAM_ACK = 0x1081807E
 };
 
-enum huapsu_data_id {
-	HUAPSU_DATA_ID_RANGE_START = 0x70U,
-	HUAPSU_DATA_ID_RANGE_END   = 0x83U,
+enum huapsu_param_id {
+	HUAPSU_PARAM_ID_ONLINE_OUTPUT_VOLTAGE_V	    = 0U,
+	HUAPSU_PARAM_ID_OFFLINE_OUTPUT_VOLTAGE_V    = 1U,
+	HUAPSU_PARAM_ID_OVERVOLTAGE_PROTECTION_V    = 2U,
+	HUAPSU_PARAM_ID_ONLINE_CURRENT_LIMIT_RATIO  = 3U,
+	HUAPSU_PARAM_ID_OFFLINE_CURRENT_LIMIT_RATIO = 4U,
 
-	HUAPSU_DATA_ID_IN_POWER	       = 0x70U,
-	HUAPSU_DATA_ID_IN_FREQ	       = 0x71U,
-	HUAPSU_DATA_ID_IN_CURRENT      = 0x72U,
-	HUAPSU_DATA_ID_OUT_POWER       = 0x73U,
-	HUAPSU_DATA_ID_EFFICIENCY      = 0x74U,
-	HUAPSU_DATA_ID_OUT_VOLTAGE     = 0x75U,
-	HUAPSU_DATA_ID_OUT_CURRENT_MAX = 0x76U,
-	HUAPSU_DATA_ID_IN_VOLTAGE      = 0x78U,
-	HUAPSU_DATA_ID_OUT_TEMP	       = 0x7FU,
-	HUAPSU_DATA_ID_OUT_CURRENT0    = 0x81U,
-	HUAPSU_DATA_ID_OUT_CURRENT1    = 0x82U,
-	HUAPSU_DATA_ID_UNKNOWN	       = 0x83U,
-	HUAPSU_DATA_ID_INVALID	       = 0xFFU
+	HUAPSU_PARAM_ID_COUNT	= 5U,
+	HUAPSU_PARAM_ID_INVALID = 0xFFU
 };
 
-enum huapsu_param {
-	HUAPSU_PARAM_ONLINE_OUTPUT_VOLTAGE  = 0U,
-	HUAPSU_PARAM_OFFLINE_OUTPUT_VOLTAGE = 1U,
-	HUAPSU_PARAM_OVERVOLTAGE_PROTECTION = 2U,
-	HUAPSU_PARAM_ONLINE_CURRENT_LIMIT   = 3U,
-	HUAPSU_PARAM_OFFLINE_CURRENT_LIMIT  = 4U
+enum huapsu_data_id {
+	HUAPSU_DATA_ID_IN_POWER_W	       = 0x70U,
+	HUAPSU_DATA_ID_IN_FREQ_HZ	       = 0x71U,
+	HUAPSU_DATA_ID_IN_CURRENT_A	       = 0x72U,
+	HUAPSU_DATA_ID_OUT_POWER_W	       = 0x73U,
+	HUAPSU_DATA_ID_EFFICIENCY_W	       = 0x74U,
+	HUAPSU_DATA_ID_OUT_VOLTAGE_V	       = 0x75U,
+	HUAPSU_DATA_ID_OUT_CURRENT_LIMIT_RATIO = 0x76U,
+	HUAPSU_DATA_ID_IN_VOLTAGE_V	       = 0x78U,
+	HUAPSU_DATA_ID_OUT_TEMP_C	       = 0x7FU,
+	HUAPSU_DATA_ID_IN_TEMP_C	       = 0x80U,
+	HUAPSU_DATA_ID_OUT_CURRENT0_A	       = 0x81U,
+	HUAPSU_DATA_ID_OUT_CURRENT1_A	       = 0x82U,
+	HUAPSU_DATA_ID_UNKNOWN		       = 0x83U,
+
+	HUAPSU_DATA_ID_COUNT   = 13U,
+	HUAPSU_DATA_ID_INVALID = 0xFFU
+};
+
+struct huapsu_id_range {
+	uint8_t start;
+	uint8_t end;
+};
+
+struct huapsu_meta {
+	char *name;
+	char *unit;
+};
+
+struct huapsu_val_entry {
+	struct huapsu_meta meta;
+
+	uint32_t value;
+	uint16_t bits_per_unit;
+	bool	 dirty;
 };
 
 /** Generic CAN2.0 frame representation. */
@@ -99,30 +125,6 @@ struct huapsu_frame {
 	uint32_t id;
 	int8_t	 dlc;
 	uint8_t	 data[HUAPSU_FRAME_MAX_LEN];
-};
-
-/** Raw data. */
-struct huapsu_data {
-	int32_t in_power_r10bpw;	/**< 10 bit per Watt unit. */
-	int32_t in_freq_r10bphz;	/**< 10 bit per Hz unit. */
-	int32_t in_current_r10bpa;	/**< 10 bit per Amp unit. */
-	int32_t out_power_r10bpw;	/**< 10 bit per Watt unit. */
-	int32_t efficiency_r10bp100pct; /**< 10 bit per 100 Percents. */
-	int32_t out_voltage_r10bpv;	/**< 10 bit per Volt unit. */
-	int32_t out_current_max;	/**< Special (scaled) unit. */
-	int32_t in_voltage_r10bpv;	/**< 10 bit per Volt unit. */
-	int32_t out_temp_r10bpc;	/**< 10 bit per Celsius unit. */
-	int32_t out_current0_r10bpa;	/**< 10 bit per Amp unit. */
-	int32_t out_current1_r10bpa;	/**< 10 bit per Amp unit. */
-};
-
-/** Raw params. */
-struct huapsu_params {
-	int32_t online_out_voltage_r10bpv;  /**< 10 bit per Volt unit. */
-	int32_t offline_out_voltage_r10bpv; /**< 10 bit per Volt unit. */
-	int32_t overvolt_protec_r10bpv;	    /**< 10 bit per Volt unit. */
-	int32_t online_current_limit;	    /**< Special (scaled) unit. */
-	int32_t offline_current_limit;	    /**< Special (scaled) unit. */
 };
 
 /** Most common parameters, used by huawei PSU.
@@ -139,11 +141,14 @@ struct huapsu {
 	uint8_t state;
 
 	struct huapsu_config cfg;
-	struct huapsu_data   data;
-	struct huapsu_params params;
+
+	struct huapsu_val_entry param_entries[HUAPSU_PARAM_ID_COUNT];
+	struct huapsu_val_entry data_entries[HUAPSU_DATA_ID_COUNT];
 
 	struct huapsu_frame rx_frame;
-	struct huapsu_frame tx_frame;
+
+	struct huapsu_frame tx_frames[HUAPSU_MAX_TX_FRAMES];
+	struct huapsu_frame tx_count;
 
 	bool online; /**< PSU is reported to be online. */
 	bool busy;   /**< Should not yield. */
@@ -152,45 +157,129 @@ struct huapsu {
 	/** How long are we allowed to stay offline. */
 	uint32_t offline_timeout_r1ms;
 	uint32_t offline_timer_r1ms; /**< How long we've been offline. */
+	uint32_t data_timer_r1ms;  /**< Time passed since last data request. */
+	uint32_t param_timer_r1ms; /**< Time passed since last param update. */
 
 	/* Diagnostics */
 	uint8_t err_code;
+	uint8_t err_state;
 	uint8_t last_msg_id;
 	uint8_t last_answ_code;
 };
 
+extern const struct huapsu_meta	  g_huapsu_param_meta[HUAPSU_PARAM_ID_COUNT];
+extern const struct huapsu_meta	  g_huapsu_data_meta[HUAPSU_DATA_ID_COUNT];
 extern const struct huapsu_config g_huapsu_config_r33640g1;
 extern const struct huapsu_config g_huapsu_config_r4875g1;
 
 void huapsu_init(struct huapsu *self, enum huapsu_hw_variant variant);
 
-bool huapsu_parse_data_frame(struct huapsu	       *self,
-			     const struct huapsu_frame *frame);
-
-bool huapsu_parse_param_frame(struct huapsu		*self,
-			      const struct huapsu_frame *frame);
-
-bool huapsu_parse_input_frame(struct huapsu		*self,
-			      const struct huapsu_frame *frame);
-
 bool huapsu_push_rx_frame(struct huapsu		    *self,
 			  const struct huapsu_frame *frame);
 
-void uapsu_update_deltatime(struct huapsu *self, uint32_t delta_time_ms);
+void huapsu_update_deltatime(struct huapsu *self, uint32_t delta_time_ms);
 
 uint8_t huapsu_step(struct huapsu *self);
 
 bool huapsu_is_busy(struct huapsu *self);
 
+struct huapsu_val_entry *huapsu_get_param_entry(struct huapsu *self,
+						uint8_t	       param_id);
+
+bool huapsu_set_param(struct huapsu_val_entry *self, int32_t value);
+
 #ifndef HUAPSU_NO_IMPL
+/* huapsu_param_id metadata array (Values 0 to 4) */
+const struct huapsu_meta g_huapsu_param_meta[HUAPSU_PARAM_ID_COUNT] = {
+    {	   "Online output voltage", "V"},
+    {	  "Offline output voltage", "V"},
+    {	  "Overvoltage protection", "V"},
+    { "Online current limit ratio",  ""},
+    {"Offline current limit ratio",  ""}
+};
+
+/* huapsu_data_id metadata array (Indexed from 0x70U to 0x83U, with gaps
+ * filled) */
+const struct huapsu_meta g_huapsu_data_meta[HUAPSU_DATA_ID_COUNT] = {
+    {		    "Input power",  "W"}, /* 0x70 */
+    {		"Input frequency", "Hz"}, /* 0x71 */
+    {		  "Input current",  "A"}, /* 0x72 */
+    {		   "Output power",  "W"}, /* 0x73 */
+    {		     "Efficiency",  "%"}, /* 0x74 */
+    {		 "Output voltage",  "V"}, /* 0x75 */
+    {"Output current limit ratio",   ""}, /* 0x76 */
+    {		  "Input voltage",  "V"}, /* 0x78 */
+    {	     "Output temperature",  "C"}, /* 0x7F */
+    {	      "Input temperature",  "C"}, /* 0x80 */
+    {	       "Output current 0",  "A"}, /* 0x81 */
+    {	       "Output current 1",  "A"}, /* 0x82 */
+    {			"Unknown",   ""}  /* 0x83 */
+};
+
 const struct huapsu_config g_huapsu_config_r33640g1 = {
     300U * 1024U, 400U * 1024U, 37U * 1024U, 15000U * 1024U};
 
 const struct huapsu_config g_huapsu_config_r4875g1 = {
     42U * 1024U, 58U * 1024U, 75U * 1024U, 15000U * 1024U};
 
+/** Maps param ID into continuous, flat range without gaps.
+ *  Starts from 0. Returns 0xFFU in case of bad vid */
+uint8_t huapsu_map_param_slot(uint8_t vid)
+{
+	const uint8_t invalid_id  = 0xFFU;
+	const uint8_t range_start = 0x00U;
+	const uint8_t range_end	  = 0x04U;
+
+	uint8_t result = invalid_id;
+
+	if ((vid >= range_start) && (vid <= range_end)) {
+		result = vid - range_start;
+	}
+
+	return result;
+}
+
+/** Maps data ID into continuous, flat range without gaps.
+ *  Starts from 0. Returns 0xFFU in case of bad vid */
+uint8_t huapsu_map_data_slot(uint8_t vid)
+{
+	const uint8_t invalid_id = 0xFFU;
+
+	const struct huapsu_id_range ranges[3U] = {
+	    {0x70U, 0x76U},
+	       {0x78U, 0x78U},
+		  {0x7FU, 0x83U}
+	};
+
+	const struct huapsu_id_range *range = NULL;
+
+	uint8_t result = invalid_id;
+	uint8_t iter;
+	uint8_t idx = 0U; /**< Flat array index. */
+
+	/* Check if it falls into any range. */
+	for (iter = 0U; iter < 3U; iter++) {
+		if ((vid >= ranges[iter].start) && (vid <= ranges[iter].end)) {
+			range = &ranges[iter];
+			break;
+		}
+
+		idx += ranges[iter].end - ranges[iter].start + 1U;
+	}
+
+	/** We've found valid range */
+	if (range != NULL) {
+		result = idx + vid - range->start;
+	}
+
+	return result;
+}
+
 void huapsu_init(struct huapsu *self, enum huapsu_hw_variant variant)
 {
+	uint8_t	       iter;
+	const uint16_t default_resolution = 1024U;
+
 	const struct huapsu _self = {0};
 	*self			  = _self;
 
@@ -208,16 +297,33 @@ void huapsu_init(struct huapsu *self, enum huapsu_hw_variant variant)
 	}
 
 	self->rx_frame.dlc = -1; /* Indicates that there is no frame. */
-	self->tx_frame.dlc = -1; /* Indicates that there is no frame. */
+
+	/* Set timers to their max interval, so they fire immediately. */
+	self->data_timer_r1ms  = HUAPSU_DATA_REQUEST_INTERVAL_MS;
+	self->param_timer_r1ms = HUAPSU_PARAM_ID_SET_INTERVAL_MS;
+
+	/* Set common resolution for params */
+	for (iter = 0; iter < (uint8_t)HUAPSU_PARAM_ID_COUNT; iter++) {
+		/* Common for most values. */
+		self->param_entries[iter].meta = g_huapsu_param_meta[iter];
+		self->param_entries[iter].bits_per_unit = default_resolution;
+	}
+
+	for (iter = 0; iter < (uint8_t)HUAPSU_DATA_ID_COUNT; iter++) {
+		/** Common for most values. */
+		self->data_entries[iter].meta = g_huapsu_data_meta[iter];
+		self->data_entries[iter].bits_per_unit = default_resolution;
+	}
 }
 
-bool huapsu_parse_data_frame(struct huapsu	       *self,
-			     const struct huapsu_frame *frame)
+void huapsu_record_error(struct huapsu *self, uint8_t err_code)
 {
-	bool success = false;
+	self->err_code	= err_code;
+	self->err_state = self->state;
+}
 
-	uint8_t data_id = frame->data[1U];
-
+int32_t huapsu_extract_value_from_frame(const struct huapsu_frame *frame)
+{
 	/** Value starts at 5th byte and has 32bit length.
 	 *  Big-endian order (MSB goes first). */
 	const uint32_t raw = ((uint32_t)frame->data[4U] << 24U) |
@@ -228,65 +334,31 @@ bool huapsu_parse_data_frame(struct huapsu	       *self,
 	/** All values are signed integers. */
 	const int32_t value = (int32_t)raw;
 
-	self->last_answ_code = frame->data[0U];
-	self->last_msg_id    = frame->data[1U];
+	return value;
+}
 
-	if (self->last_answ_code == (uint8_t)HUAPSU_ANSW_CODE_OK) {
-		success = true;
-	} else {
-		data_id = HUAPSU_DATA_ID_INVALID;
+struct huapsu_val_entry *huapsu_get_param_entry(struct huapsu *self,
+						uint8_t	       param_id)
+{
+	struct huapsu_val_entry *entry = NULL;
+
+	uint8_t slot = huapsu_map_param_slot(param_id);
+
+	if (slot != (uint8_t)-1) {
+		entry = &self->param_entries[slot];
 	}
 
-	switch (data_id) {
-	case HUAPSU_DATA_ID_IN_POWER:
-		self->data.in_power_r10bpw = value;
-		break;
+	return entry;
+}
 
-	case HUAPSU_DATA_ID_IN_FREQ:
-		self->data.in_freq_r10bphz = value;
-		break;
+bool huapsu_set_param(struct huapsu_val_entry *self, int32_t value)
+{
+	bool success = false;
 
-	case HUAPSU_DATA_ID_IN_CURRENT:
-		self->data.in_current_r10bpa = value;
-		break;
-
-	case HUAPSU_DATA_ID_OUT_POWER:
-		self->data.out_power_r10bpw = value;
-		break;
-
-	case HUAPSU_DATA_ID_EFFICIENCY:
-		self->data.efficiency_r10bp100pct = value;
-		break;
-
-	case HUAPSU_DATA_ID_OUT_VOLTAGE:
-		self->data.out_voltage_r10bpv = value;
-		break;
-
-	case HUAPSU_DATA_ID_OUT_CURRENT_MAX:
-		self->data.out_current_max = value;
-		break;
-
-	case HUAPSU_DATA_ID_IN_VOLTAGE:
-		self->data.out_voltage_r10bpv = value;
-		break;
-
-	case HUAPSU_DATA_ID_OUT_TEMP:
-		self->data.out_temp_r10bpc = value;
-		break;
-
-	case HUAPSU_DATA_ID_OUT_CURRENT0:
-		self->data.out_current0_r10bpa = value;
-		break;
-
-	case HUAPSU_DATA_ID_OUT_CURRENT1:
-		self->data.out_current1_r10bpa = value;
-		break;
-
-	case HUAPSU_DATA_ID_UNKNOWN:
-	case HUAPSU_DATA_ID_INVALID:
-	default:
-		self->err_code = HUAPSU_ERR_INVALID_DATA_ID;
-		break;
+	if (self != NULL) {
+		self->value = value;
+		self->dirty = true;
+		success	    = true;
 	}
 
 	return success;
@@ -297,11 +369,54 @@ bool huapsu_parse_param_frame(struct huapsu		*self,
 {
 	bool success = false;
 
+	uint8_t param_id = frame->data[1U];
+	uint8_t slot	 = 0U;
+
+	const int32_t value = huapsu_extract_value_from_frame(frame);
+
 	self->last_answ_code = frame->data[0U];
 	self->last_msg_id    = frame->data[1U];
 
 	if (self->last_answ_code == (uint8_t)HUAPSU_ANSW_CODE_OK) {
 		success = true;
+
+		slot = huapsu_map_param_slot(param_id);
+		if (slot != (uint8_t)-1) {
+			self->param_entries[slot].value = value;
+		} else {
+			huapsu_record_error(self, HUAPSU_ERR_INVALID_DATA_ID);
+		}
+	} else {
+		huapsu_record_error(self, HUAPSU_ERR_INVALID_ANSWER);
+	}
+
+	return success;
+}
+
+bool huapsu_parse_data_frame(struct huapsu	       *self,
+			     const struct huapsu_frame *frame)
+{
+	bool success = false;
+
+	uint8_t data_id = frame->data[1U];
+	uint8_t slot	= 0U;
+
+	self->last_answ_code = frame->data[0U];
+	self->last_msg_id    = frame->data[1U];
+
+	if (self->last_answ_code == (uint8_t)HUAPSU_ANSW_CODE_OK) {
+		success = true;
+
+		slot = huapsu_map_data_slot(data_id);
+		if (slot != (uint8_t)-1) {
+			self->data_entries[slot].value =
+			    huapsu_extract_value_from_frame(frame);
+		} else {
+			huapsu_record_error(self, HUAPSU_ERR_INVALID_DATA_ID);
+			success = false;
+		}
+	} else {
+		huapsu_record_error(self, HUAPSU_ERR_INVALID_ANSWER);
 	}
 
 	return success;
@@ -317,7 +432,7 @@ bool huapsu_parse_input_frame(struct huapsu		*self,
 		if (frame->dlc == (int8_t)HUAPSU_FRAME_MAX_LEN) {
 			success = huapsu_parse_data_frame(self, frame);
 		} else {
-			self->err_code = HUAPSU_ERR_INVALID_DLC;
+			huapsu_record_error(self, HUAPSU_ERR_INVALID_DLC);
 		}
 		break;
 
@@ -325,12 +440,12 @@ bool huapsu_parse_input_frame(struct huapsu		*self,
 		if (frame->dlc == (int8_t)HUAPSU_FRAME_MAX_LEN) {
 			success = huapsu_parse_param_frame(self, frame);
 		} else {
-			self->err_code = HUAPSU_ERR_INVALID_DLC;
+			huapsu_record_error(self, HUAPSU_ERR_INVALID_DLC);
 		}
 		break;
 
 	default:
-		self->err_code = HUAPSU_ERR_INVALID_ID;
+		huapsu_record_error(self, HUAPSU_ERR_INVALID_ID);
 		break;
 	}
 
@@ -383,14 +498,15 @@ uint8_t huapsu_state_rx(struct huapsu *self)
 	return event;
 }
 
+/** TODO */
 uint8_t huapsu_state_tx(struct huapsu *self)
 {
 	enum huapsu_event event = HUAPSU_EVENT_NONE;
 
-	/** TODO implement */
+	(void)self;
+	/*tx_count = tx_frames
 
-	/* Advance to the next state. */
-	self->state = HUAPSU_STATE_TIMERS;
+	self->state = HUAPSU_STATE_TIMERS;*/
 
 	return event;
 }
@@ -401,7 +517,7 @@ uint8_t huapsu_state_timers(struct huapsu *self)
 	return HUAPSU_EVENT_REQ_TIME;
 }
 
-void uapsu_update_deltatime(struct huapsu *self, const uint32_t delta_time_ms)
+void huapsu_update_deltatime(struct huapsu *self, const uint32_t delta_time_ms)
 {
 	/* Increment offline timer, until it reached max threshold */
 	if (self->offline_timer_r1ms < self->offline_timeout_r1ms) {
