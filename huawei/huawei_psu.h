@@ -28,45 +28,28 @@
 #include <stddef.h>
 #include <stdint.h>
 
-/** Default current calibration multiplier. */
+/******************************************************************************
+ * GLOBALS DEFINITIONS
+ *****************************************************************************/
 #define HUAPSU_FRAME_MAX_LEN 8U
 #define HUAPSU_MAX_TX_FRAMES 8U
 #define HUAPSU_DATA_REQUEST_INTERVAL_MS 100U
 #define HUAPSU_PARAM_ID_SET_INTERVAL_MS 1000U
 #define HUAPSU_MAX_ENTRIES 0xFFU
 
-enum huapsu_hw_variant {
-	HUAPSU_HW_VARIANT_R33640G1,
-	HUAPSU_HW_VARIANT_R4875G1
+/******************************************************************************
+ * HARDWARE INTERFACE (agnostic)
+ *****************************************************************************/
+/** Generic CAN2.0 frame representation. */
+struct huapsu_frame {
+	uint32_t id;
+	int8_t	 dlc;
+	uint8_t	 data[HUAPSU_FRAME_MAX_LEN];
 };
 
-enum huapsu_state {
-	HUAPSU_STATE_YIELD, /**< Give other tasks control. */
-	HUAPSU_STATE_RX,    /**< Receiving messages. */
-	HUAPSU_STATE_TX,    /**< Sending messages. */
-	HUAPSU_STATE_TIMERS /**< Updating timers. */
-};
-
-enum huapsu_answ_code {
-	HUAPSU_ANSW_CODE_OK  = 0x01U,
-	HUAPSU_ANSW_CODE_ERR = 0x21U
-};
-
-enum huapsu_err {
-	HUAPSU_ERR_NONE,
-	HUAPSU_ERR_INVALID_ANSWER,
-	HUAPSU_ERR_INVALID_ID,
-	HUAPSU_ERR_INVALID_DLC,
-	HUAPSU_ERR_INVALID_DATA_ID
-};
-
-enum huapsu_event {
-	HUAPSU_EVENT_NONE,     /**< No events emited. */
-	HUAPSU_EVENT_REQ_TIME, /**< Timers update requested. */
-	HUAPSU_EVENT_MESSAGE,  /**< New message arrived. */
-	HUAPSU_EVENT_ERROR     /**< Some error has occured. */
-};
-
+/******************************************************************************
+ * PROTOCOL SPECIFIC
+ *****************************************************************************/
 enum huapsu_msg_id {
 	HUAPSU_MSG_ID_DATA_REQU = 0x108040FE,
 	HUAPSU_MSG_ID_DATA_ANSW = 0x1081407F,
@@ -74,36 +57,14 @@ enum huapsu_msg_id {
 	HUAPSU_MSG_ID_PARAM_ACK = 0x1081807E
 };
 
-enum huapsu_param_id {
-	HUAPSU_PARAM_ID_ONLINE_OUTPUT_VOLTAGE_V	    = 0U,
-	HUAPSU_PARAM_ID_OFFLINE_OUTPUT_VOLTAGE_V    = 1U,
-	HUAPSU_PARAM_ID_OVERVOLTAGE_PROTECTION_V    = 2U,
-	HUAPSU_PARAM_ID_ONLINE_CURRENT_LIMIT_RATIO  = 3U,
-	HUAPSU_PARAM_ID_OFFLINE_CURRENT_LIMIT_RATIO = 4U,
-
-	HUAPSU_PARAM_ID_COUNT	= 5U,
-	HUAPSU_PARAM_ID_INVALID = 0xFFU
+enum huapsu_answ_code {
+	HUAPSU_ANSW_CODE_OK  = 0x01U,
+	HUAPSU_ANSW_CODE_ERR = 0x21U
 };
 
-enum huapsu_data_id {
-	HUAPSU_DATA_ID_IN_POWER_W	       = 0x70U,
-	HUAPSU_DATA_ID_IN_FREQ_HZ	       = 0x71U,
-	HUAPSU_DATA_ID_IN_CURRENT_A	       = 0x72U,
-	HUAPSU_DATA_ID_OUT_POWER_W	       = 0x73U,
-	HUAPSU_DATA_ID_EFFICIENCY_W	       = 0x74U,
-	HUAPSU_DATA_ID_OUT_VOLTAGE_V	       = 0x75U,
-	HUAPSU_DATA_ID_OUT_CURRENT_LIMIT_RATIO = 0x76U,
-	HUAPSU_DATA_ID_IN_VOLTAGE_V	       = 0x78U,
-	HUAPSU_DATA_ID_OUT_TEMP_C	       = 0x7FU,
-	HUAPSU_DATA_ID_IN_TEMP_C	       = 0x80U,
-	HUAPSU_DATA_ID_OUT_CURRENT0_A	       = 0x81U,
-	HUAPSU_DATA_ID_OUT_CURRENT1_A	       = 0x82U,
-	HUAPSU_DATA_ID_UNKNOWN		       = 0x83U,
-
-	HUAPSU_DATA_ID_COUNT   = 13U,
-	HUAPSU_DATA_ID_INVALID = 0xFFU
-};
-
+/******************************************************************************
+ * PARAMS & DATA COMMON
+ *****************************************************************************/
 struct huapsu_id_range {
 	uint8_t start;
 	uint8_t end;
@@ -122,96 +83,21 @@ struct huapsu_val_entry {
 	bool	 dirty;
 };
 
-/** Generic CAN2.0 frame representation. */
-struct huapsu_frame {
-	uint32_t id;
-	int8_t	 dlc;
-	uint8_t	 data[HUAPSU_FRAME_MAX_LEN];
+/******************************************************************************
+ * PARAMS (Write-only fields).
+ *****************************************************************************/
+enum huapsu_param_id {
+	HUAPSU_PARAM_ID_ONLINE_OUTPUT_VOLTAGE_V	    = 0U,
+	HUAPSU_PARAM_ID_OFFLINE_OUTPUT_VOLTAGE_V    = 1U,
+	HUAPSU_PARAM_ID_OVERVOLTAGE_PROTECTION_V    = 2U,
+	HUAPSU_PARAM_ID_ONLINE_CURRENT_LIMIT_RATIO  = 3U,
+	HUAPSU_PARAM_ID_OFFLINE_CURRENT_LIMIT_RATIO = 4U,
+
+	HUAPSU_PARAM_ID_COUNT	= 5U,
+	HUAPSU_PARAM_ID_INVALID = 0xFFU
 };
 
-/** Most common parameters, used by huawei PSU.
- *  TODO more parameters */
-struct huapsu_config {
-	uint32_t min_output_voltage_r10bpv; /**< 10 bit per Volt unit. */
-	uint32_t max_output_voltage_r10bpv; /**< 10 bit per Volt unit. */
-	uint32_t max_output_current_r10bpa; /**< 10 bit per Amp unit. */
-	uint32_t max_output_power_r10bpw;   /**< 10 bit per Watt unit. */
-};
-
-/** Main instance. */
-struct huapsu {
-	uint8_t state;
-
-	struct huapsu_config cfg;
-
-	struct huapsu_val_entry param_entries[HUAPSU_PARAM_ID_COUNT];
-	struct huapsu_val_entry data_entries[HUAPSU_DATA_ID_COUNT];
-
-	struct huapsu_frame rx_frame;
-
-	/** Param entries queue for send.
-	 *  The value stores index to value in param_entries[] */
-	uint8_t param_tx_queue[HUAPSU_PARAM_ID_COUNT];
-	uint8_t param_tx_count;
-
-	bool online; /**< PSU is reported to be online. */
-	bool busy;   /**< Should not yield. */
-
-	/* Timers */
-	/** How long are we allowed to stay offline. */
-	uint32_t offline_timeout_r1ms;
-	uint32_t offline_timer_r1ms; /**< How long we've been offline. */
-	uint32_t data_timer_r1ms;  /**< Time passed since last data request. */
-	uint32_t param_timer_r1ms; /**< Time passed since last param update. */
-
-	/* Diagnostics */
-	uint8_t err_code;
-	uint8_t err_state;
-	uint8_t last_msg_id;
-	uint8_t last_answ_code;
-};
-
-extern const struct huapsu_meta	  g_huapsu_param_meta[HUAPSU_PARAM_ID_COUNT];
-extern const struct huapsu_meta	  g_huapsu_data_meta[HUAPSU_DATA_ID_COUNT];
-extern const struct huapsu_config g_huapsu_config_r33640g1;
-extern const struct huapsu_config g_huapsu_config_r4875g1;
-
-/** Initializes main instance. Hardware variant must be specified. */
-void huapsu_init(struct huapsu *self, enum huapsu_hw_variant variant);
-
-/** Push RX frame into driver.
- *  Returns true on success and false if frame is already queued. */
-bool huapsu_push_rx_frame(struct huapsu		    *self,
-			  const struct huapsu_frame *frame);
-
-/** Pop TX frame from the driver.
- *  Returns false if there are no frames left to pop. */
-bool huapsu_pop_tx_frame(struct huapsu *self, struct huapsu_frame *frame);
-
-/** Updates all internal timers. Should only be called on
-    HUAPSU_EVENT_REQ_TIME event */
-void huapsu_update_deltatime(struct huapsu *self, uint32_t delta_time_ms);
-
-/** Main fsm routine. Must be called in while loop until busy flag
- *  is set to true. */
-uint8_t huapsu_step(struct huapsu *self);
-
-/** FSM is busy and shall continue its work. */
-bool huapsu_is_busy(struct huapsu *self);
-
-/** Get pointer to an param entry.
-    Provide valid ID. May return NULL on failure. */
-struct huapsu_val_entry *huapsu_get_param_entry(struct huapsu *self,
-						uint8_t	       param_id);
-
-/** Set param of a valid entry. */
-bool huapsu_set_param(struct huapsu *self, struct huapsu_val_entry *entry,
-		      int32_t value);
-
-/** Get pointer to a data entry. May return NULL in case if data entry is
- *  not available (has never been received) or if ID is invalid. */
-struct huapsu_val_entry *huapsu_get_data_entry(struct huapsu *self,
-					       uint8_t	      param_id);
+extern const struct huapsu_meta g_huapsu_param_meta[HUAPSU_PARAM_ID_COUNT];
 
 #ifndef HUAPSU_NO_IMPL
 /** huapsu_param_id metadata array (Values 0 to 4). */
@@ -222,30 +108,6 @@ const struct huapsu_meta g_huapsu_param_meta[HUAPSU_PARAM_ID_COUNT] = {
     { "Online current limit ratio",  ""},
     {"Offline current limit ratio",  ""}
 };
-
-/** huapsu_data_id metadata array (Indexed from 0x70U to 0x83U, with gaps
- * filled). */
-const struct huapsu_meta g_huapsu_data_meta[HUAPSU_DATA_ID_COUNT] = {
-    {		    "Input power",  "W"}, /* 0x70 */
-    {		"Input frequency", "Hz"}, /* 0x71 */
-    {		  "Input current",  "A"}, /* 0x72 */
-    {		   "Output power",  "W"}, /* 0x73 */
-    {		     "Efficiency",  "%"}, /* 0x74 */
-    {		 "Output voltage",  "V"}, /* 0x75 */
-    {"Output current limit ratio",   ""}, /* 0x76 */
-    {		  "Input voltage",  "V"}, /* 0x78 */
-    {	     "Output temperature",  "C"}, /* 0x7F */
-    {	      "Input temperature",  "C"}, /* 0x80 */
-    {	       "Output current 0",  "A"}, /* 0x81 */
-    {	       "Output current 1",  "A"}, /* 0x82 */
-    {			"Unknown",   ""}  /* 0x83 */
-};
-
-const struct huapsu_config g_huapsu_config_r33640g1 = {
-    300U * 1024U, 400U * 1024U, 37U * 1024U, 15000U * 1024U};
-
-const struct huapsu_config g_huapsu_config_r4875g1 = {
-    42U * 1024U, 58U * 1024U, 75U * 1024U, 15000U * 1024U};
 
 /** Maps param ID into continuous, flat range without gaps.
  *  Starts from 0. Returns 0xFFU in case of bad vid */
@@ -279,6 +141,50 @@ uint8_t huapsu_map_slot_to_param_id(uint8_t vid)
 
 	return result;
 }
+#endif /* HUAPSU_NO_IMPL */
+
+/******************************************************************************
+ * DATA (Read-only fields).
+ *****************************************************************************/
+enum huapsu_data_id {
+	HUAPSU_DATA_ID_IN_POWER_W	       = 0x70U,
+	HUAPSU_DATA_ID_IN_FREQ_HZ	       = 0x71U,
+	HUAPSU_DATA_ID_IN_CURRENT_A	       = 0x72U,
+	HUAPSU_DATA_ID_OUT_POWER_W	       = 0x73U,
+	HUAPSU_DATA_ID_EFFICIENCY_W	       = 0x74U,
+	HUAPSU_DATA_ID_OUT_VOLTAGE_V	       = 0x75U,
+	HUAPSU_DATA_ID_OUT_CURRENT_LIMIT_RATIO = 0x76U,
+	HUAPSU_DATA_ID_IN_VOLTAGE_V	       = 0x78U,
+	HUAPSU_DATA_ID_OUT_TEMP_C	       = 0x7FU,
+	HUAPSU_DATA_ID_IN_TEMP_C	       = 0x80U,
+	HUAPSU_DATA_ID_OUT_CURRENT0_A	       = 0x81U,
+	HUAPSU_DATA_ID_OUT_CURRENT1_A	       = 0x82U,
+	HUAPSU_DATA_ID_UNKNOWN		       = 0x83U,
+
+	HUAPSU_DATA_ID_COUNT   = 13U,
+	HUAPSU_DATA_ID_INVALID = 0xFFU
+};
+
+extern const struct huapsu_meta g_huapsu_data_meta[HUAPSU_DATA_ID_COUNT];
+
+#ifndef HUAPSU_NO_IMPL
+/** huapsu_data_id metadata array (Indexed from 0x70U to 0x83U, with gaps
+ * filled). */
+const struct huapsu_meta g_huapsu_data_meta[HUAPSU_DATA_ID_COUNT] = {
+    {		    "Input power",  "W"}, /* 0x70 */
+    {		"Input frequency", "Hz"}, /* 0x71 */
+    {		  "Input current",  "A"}, /* 0x72 */
+    {		   "Output power",  "W"}, /* 0x73 */
+    {		     "Efficiency",  "%"}, /* 0x74 */
+    {		 "Output voltage",  "V"}, /* 0x75 */
+    {"Output current limit ratio",   ""}, /* 0x76 */
+    {		  "Input voltage",  "V"}, /* 0x78 */
+    {	     "Output temperature",  "C"}, /* 0x7F */
+    {	      "Input temperature",  "C"}, /* 0x80 */
+    {	       "Output current 0",  "A"}, /* 0x81 */
+    {	       "Output current 1",  "A"}, /* 0x82 */
+    {			"Unknown",   ""}  /* 0x83 */
+};
 
 /** Maps data ID into continuous, flat range without gaps.
  *  Starts from 0. Returns 0xFFU in case of bad vid */
@@ -315,8 +221,98 @@ uint8_t huapsu_map_data_id_to_slot(uint8_t vid)
 
 	return result;
 }
+#endif /* HUAPSU_NO_IMPL */
 
-void huapsu_init(struct huapsu *self, enum huapsu_hw_variant variant)
+/******************************************************************************
+ * IMPLEMENTATION SPECIFIC ENUMS
+ *****************************************************************************/
+enum huapsu_hw_variant {
+	HUAPSU_HW_VARIANT_NONE, /** Up to user. */
+	HUAPSU_HW_VARIANT_R33640G1,
+	HUAPSU_HW_VARIANT_R4875G1
+};
+
+enum huapsu_state {
+	HUAPSU_STATE_YIELD, /**< Give other tasks control. */
+	HUAPSU_STATE_RX,    /**< Receiving messages. */
+	HUAPSU_STATE_TX,    /**< Sending messages. */
+	HUAPSU_STATE_TIMERS /**< Updating timers. */
+};
+
+enum huapsu_err {
+	HUAPSU_ERR_NONE,
+	HUAPSU_ERR_INVALID_ANSWER,
+	HUAPSU_ERR_INVALID_ID,
+	HUAPSU_ERR_INVALID_DLC,
+	HUAPSU_ERR_INVALID_DATA_ID
+};
+
+enum huapsu_event {
+	HUAPSU_EVENT_NONE,     /**< No events emited. */
+	HUAPSU_EVENT_REQ_TIME, /**< Timers update requested. */
+	HUAPSU_EVENT_MESSAGE,  /**< New message arrived. */
+	HUAPSU_EVENT_ERROR     /**< Some error has occured. */
+};
+
+/******************************************************************************
+ * DEVICE CONFIGURATION
+ *****************************************************************************/
+struct huapsu_config {
+	uint32_t min_output_voltage_r10bpv; /**< 10 bit per Volt unit. */
+	uint32_t max_output_voltage_r10bpv; /**< 10 bit per Volt unit. */
+	uint32_t max_output_current_r10bpa; /**< 10 bit per Amp unit. */
+	uint32_t max_output_power_r10bpw;   /**< 10 bit per Watt unit. */
+};
+
+extern const struct huapsu_config g_huapsu_config_r33640g1;
+extern const struct huapsu_config g_huapsu_config_r4875g1;
+
+/******************************************************************************
+ * MAIN INSTANCE
+ *****************************************************************************/
+struct huapsu {
+	uint8_t state;
+
+	struct huapsu_config cfg;
+
+	struct huapsu_val_entry param_entries[HUAPSU_PARAM_ID_COUNT];
+	struct huapsu_val_entry data_entries[HUAPSU_DATA_ID_COUNT];
+
+	struct huapsu_frame rx_frame;
+
+	/** Param entries queued for send.
+	 *  The value stores index to value in param_entries[] */
+	uint8_t param_tx_queue[HUAPSU_PARAM_ID_COUNT];
+	uint8_t param_tx_count;
+
+	bool online; /**< PSU is reported to be online. */
+	bool busy;   /**< Should not yield. */
+
+	/* Timers */
+	/** How long are we allowed to stay offline. */
+	uint32_t offline_timeout_r1ms;
+	uint32_t offline_timer_r1ms; /**< How long we've been offline. */
+	uint32_t data_timer_r1ms;  /**< Time passed since last data request. */
+	uint32_t param_timer_r1ms; /**< Time passed since last param update. */
+
+	/* Diagnostics */
+	uint8_t err_code;
+	uint8_t err_state;
+	uint8_t last_msg_id;
+	uint8_t last_answ_code;
+};
+
+/** Initializes main instance. Hardware variant must be specified. */
+void huapsu_init(struct huapsu *self, enum huapsu_hw_variant variant);
+
+#ifndef HUAPSU_NO_IMPL
+const struct huapsu_config g_huapsu_config_r33640g1 = {
+    300U * 1024U, 400U * 1024U, 37U * 1024U, 15000U * 1024U};
+
+const struct huapsu_config g_huapsu_config_r4875g1 = {
+    42U * 1024U, 58U * 1024U, 75U * 1024U, 15000U * 1024U};
+
+void huapsu_init(struct huapsu *self, const enum huapsu_hw_variant variant)
 {
 	uint8_t	       iter;
 	const uint16_t default_resolution = 1024U;
@@ -356,8 +352,95 @@ void huapsu_init(struct huapsu *self, enum huapsu_hw_variant variant)
 		self->data_entries[iter].bits_per_unit = default_resolution;
 	}
 }
+#endif /* HUAPSU_NO_IMPL */
 
-void huapsu_record_error(struct huapsu *self, uint8_t err_code)
+/******************************************************************************
+ * GETTERS / SETTERS
+ *****************************************************************************/
+/** Gets specific param entry data struct (immutable).
+    Returns true in case of success */
+bool huapsu_get_param_entry(struct huapsu *self, uint8_t param_id,
+			    struct huapsu_val_entry *entry);
+
+/** Set specific param value.
+    Returns true in case of success */
+bool huapsu_set_param_value(struct huapsu *self, uint8_t param_id,
+			    int32_t value);
+
+/** Gets specific param entry data struct (immutable).
+    Returns true in case of success */
+bool huapsu_get_data_value(struct huapsu *self, uint8_t data_id,
+			   struct huapsu_val_entry *entry);
+
+#ifndef HUAPSU_NO_IMPL
+bool huapsu_get_param_entry(struct huapsu *self, const uint8_t param_id,
+			    struct huapsu_val_entry *entry)
+{
+	bool	success = false;
+	uint8_t slot	= huapsu_map_param_id_to_slot(param_id);
+
+	if (slot != (uint8_t)-1) {
+		*entry	= self->param_entries[slot];
+		success = true;
+	}
+
+	return success;
+}
+
+bool huapsu_set_param_value(
+    struct huapsu *self,
+    const uint8_t  param_id, /* NOLINT(bugprone-easily-swappable-parameters) */
+    const int32_t  value)
+{
+	bool	success = false;
+	uint8_t slot	= huapsu_map_param_id_to_slot(param_id);
+
+	if (slot != (uint8_t)-1) {
+		struct huapsu_val_entry *entry = &self->param_entries[slot];
+
+		/* Add this to param to the TX queue.
+		 * This can be done only once. Until frame is popped.
+		 */
+		if (!entry->dirty) {
+			self->param_tx_queue[self->param_tx_count] = slot;
+			self->param_tx_count++;
+		}
+
+		entry->dirty = true;
+		entry->value = value;
+		success	     = true;
+	}
+
+	return success;
+}
+
+bool huapsu_get_data_value(struct huapsu *self, const uint8_t data_id,
+			   struct huapsu_val_entry *entry)
+{
+	bool	success = false;
+	uint8_t slot	= huapsu_map_data_id_to_slot(data_id);
+
+	if (slot != (uint8_t)-1) {
+		*entry	= self->data_entries[slot];
+		success = true;
+	}
+
+	return success;
+}
+#endif /* HUAPSU_NO_IMPL */
+
+/******************************************************************************
+ * FINITE STATE MACHINE IMPLEMENTATION
+ *****************************************************************************/
+/** Main fsm routine. Must be called in while loop until busy flag
+ *  is set to true. */
+uint8_t huapsu_step(struct huapsu *self);
+
+/** FSM is busy and shall not be interrupted by anything for safety reasons. */
+bool huapsu_is_busy(struct huapsu *self);
+
+#ifndef HUAPSU_NO_IMPL
+void huapsu_record_error(struct huapsu *self, const uint8_t err_code)
 {
 	self->err_code	= err_code;
 	self->err_state = self->state;
@@ -378,7 +461,7 @@ int32_t huapsu_decode_value(const struct huapsu_frame *frame)
 	return value;
 }
 
-void huapsu_encode_value(struct huapsu_frame *frame, int32_t value)
+void huapsu_encode_value(struct huapsu_frame *frame, const int32_t value)
 {
 	/* Offset within frame data */
 	const uint8_t ofs = 4U;
@@ -394,44 +477,6 @@ void huapsu_encode_value(struct huapsu_frame *frame, int32_t value)
 	frame->data[ofs + 1U] = enc1;
 	frame->data[ofs + 2U] = enc2;
 	frame->data[ofs + 3U] = enc3;
-}
-
-struct huapsu_val_entry *huapsu_get_param_entry(struct huapsu *self,
-						uint8_t	       param_id)
-{
-	struct huapsu_val_entry *entry = NULL;
-
-	uint8_t slot = huapsu_map_param_id_to_slot(param_id);
-
-	if (slot != (uint8_t)-1) {
-		entry = &self->param_entries[slot];
-	}
-
-	return entry;
-}
-
-bool huapsu_set_param(struct huapsu *self, struct huapsu_val_entry *entry,
-		      int32_t value)
-{
-	bool success = false;
-
-	if (entry != NULL) {
-		/* Extract slot id from pointer. TODO MISRA compliance */
-		uint8_t slot = entry - self->param_entries;
-
-		/* Add this to param to the TX queue.
-		 * This can be done only once. Until frame is popped. */
-		if (!entry->dirty) {
-			self->param_tx_queue[self->param_tx_count] = slot;
-			self->param_tx_count++;
-		}
-
-		entry->dirty = true;
-		entry->value = value;
-		success	     = true;
-	}
-
-	return success;
 }
 
 bool huapsu_parse_param_frame(struct huapsu		*self,
@@ -461,22 +506,6 @@ bool huapsu_parse_param_frame(struct huapsu		*self,
 	}
 
 	return success;
-}
-
-struct huapsu_val_entry *huapsu_get_data_entry(struct huapsu *self,
-					       uint8_t	      param_id)
-{
-	struct huapsu_val_entry *entry = NULL;
-
-	uint8_t slot = huapsu_map_data_id_to_slot(param_id);
-
-	/* We should alway check for dirty flag.
-	 * Otherwise value is not considered to be safe for read. */
-	if (slot != (uint8_t)-1 && self->data_entries[slot].dirty) {
-		entry = &self->data_entries[slot];
-	}
-
-	return entry;
 }
 
 bool huapsu_parse_data_frame(struct huapsu	       *self,
@@ -540,51 +569,6 @@ bool huapsu_parse_input_frame(struct huapsu		*self,
 	return success;
 }
 
-bool huapsu_push_rx_frame(struct huapsu		    *self,
-			  const struct huapsu_frame *frame)
-{
-	bool success = false;
-
-	if (self->rx_frame.dlc < 0) {
-		self->rx_frame = *frame;
-		success	       = true;
-	}
-
-	return success;
-}
-
-bool huapsu_pop_tx_frame(struct huapsu *self, struct huapsu_frame *frame)
-{
-	bool success = false;
-
-	if (self->param_tx_count > 0U) {
-		const uint8_t slot =
-		    self->param_tx_queue[self->param_tx_count - 1U];
-		const uint8_t pid = huapsu_map_slot_to_param_id(slot);
-
-		struct huapsu_val_entry *entry = NULL;
-
-		/* TODO this should not happen at all */
-		if (pid != (uint8_t)-1) {
-			entry = &self->param_entries[slot];
-
-			frame->id      = HUAPSU_MSG_ID_PARAM_SET;
-			frame->dlc     = HUAPSU_FRAME_MAX_LEN;
-			frame->data[0] = 0x01U;
-			frame->data[1] = pid;
-			frame->data[2] = 0x00U;
-			frame->data[3] = 0x00U;
-
-			huapsu_encode_value(frame, entry->value);
-		}
-
-		self->param_tx_count--;
-		success = true;
-	}
-
-	return success;
-}
-
 uint8_t huapsu_state_yield(struct huapsu *self)
 {
 	self->state = HUAPSU_STATE_RX;
@@ -618,10 +602,7 @@ uint8_t huapsu_state_tx(struct huapsu *self)
 {
 	enum huapsu_event event = HUAPSU_EVENT_NONE;
 
-	(void)self;
-	/*tx_count = tx_frames
-
-	self->state = HUAPSU_STATE_TIMERS;*/
+	self->state = HUAPSU_STATE_TIMERS;
 
 	return event;
 }
@@ -630,16 +611,6 @@ uint8_t huapsu_state_timers(struct huapsu *self)
 {
 	self->state = HUAPSU_STATE_YIELD;
 	return HUAPSU_EVENT_REQ_TIME;
-}
-
-void huapsu_update_deltatime(struct huapsu *self, const uint32_t delta_time_ms)
-{
-	/* Increment offline timer, until it reached max threshold */
-	if (self->offline_timer_r1ms < self->offline_timeout_r1ms) {
-		self->offline_timer_r1ms += delta_time_ms;
-	} else {
-		self->online = false;
-	}
 }
 
 uint8_t huapsu_step(struct huapsu *self)
@@ -675,6 +646,126 @@ uint8_t huapsu_step(struct huapsu *self)
 }
 
 bool huapsu_is_busy(struct huapsu *self) { return self->busy; }
+#endif /* HUAPSU_NO_IMPL */
 
-#endif /* HUAPSU_IMPL */
+/******************************************************************************
+ * INPUT / OUTPUT
+ *****************************************************************************/
+/** Push RX frame into driver.
+ *  Returns true on success and false if frame is already queued. */
+bool huapsu_push_rx_frame(struct huapsu		    *self,
+			  const struct huapsu_frame *frame);
+
+/** Pop TX frame from the driver.
+ *  Returns false if there are no frames left to pop. */
+bool huapsu_pop_tx_frame(struct huapsu *self, struct huapsu_frame *frame);
+
+/** Updates all internal timers. Should only be called on
+    HUAPSU_EVENT_REQ_TIME event */
+void huapsu_update_timers(struct huapsu *self, uint32_t delta_time_ms);
+
+#ifndef HUAPSU_NO_IMPL
+bool huapsu_push_rx_frame(struct huapsu		    *self,
+			  const struct huapsu_frame *frame)
+{
+	bool success = false;
+
+	if (self->rx_frame.dlc < 0) {
+		self->rx_frame = *frame;
+		success	       = true;
+	}
+
+	return success;
+}
+
+bool huapsu_pop_tx_frame(struct huapsu *self, struct huapsu_frame *frame)
+{
+	bool success = false;
+
+	uint8_t iter;
+
+	/* Param values must be sent every interval automatically. */
+	if (self->param_timer_r1ms >= HUAPSU_PARAM_ID_SET_INTERVAL_MS) {
+		self->param_timer_r1ms = 0U;
+
+		self->param_tx_count = 0U;
+
+		for (iter = 0U; iter < (uint8_t)HUAPSU_PARAM_ID_COUNT;
+		     iter++) {
+			/* Do not queue uninitialized frames. */
+			if (!self->param_entries[iter].dirty) {
+				continue;
+			}
+
+			self->param_tx_queue[self->param_tx_count] = iter;
+			self->param_tx_count++;
+		}
+	}
+
+	/* Only send params when online? TODO decide if that's necessary */
+	if ((self->param_tx_count > 0U) /*&& self->online*/) {
+		const uint8_t slot =
+		    self->param_tx_queue[self->param_tx_count - 1U];
+		const uint8_t pid = huapsu_map_slot_to_param_id(slot);
+
+		struct huapsu_val_entry *entry = NULL;
+
+		/* TODO this should not happen at all */
+		if (pid != (uint8_t)-1) {
+			entry = &self->param_entries[slot];
+
+			frame->id      = HUAPSU_MSG_ID_PARAM_SET;
+			frame->dlc     = HUAPSU_FRAME_MAX_LEN;
+			frame->data[0] = 0x01U;
+			frame->data[1] = pid;
+			frame->data[2] = 0x00U;
+			frame->data[3] = 0x00U;
+
+			huapsu_encode_value(frame, entry->value);
+		}
+
+		self->param_tx_count--;
+		success = true;
+	} else if (self->data_timer_r1ms >= HUAPSU_DATA_REQUEST_INTERVAL_MS) {
+		/* Data values must be requested every interval automatically.
+		 */
+		self->data_timer_r1ms = 0U;
+
+		frame->id  = HUAPSU_MSG_ID_DATA_REQU;
+		frame->dlc = HUAPSU_FRAME_MAX_LEN;
+
+		for (iter = 0U; iter < HUAPSU_FRAME_MAX_LEN; iter++) {
+			frame->data[iter] = 0x00U;
+		}
+		success = true;
+	} else {
+	}
+
+	return success;
+}
+
+void huapsu_update_timers(struct huapsu *self, const uint32_t delta_time_ms)
+{
+	if (self->state != (uint8_t)HUAPSU_STATE_TIMERS) {
+		/* Invalid state. TODO exception */
+	} else {
+		/* Increment offline timer, until it reached max
+		 * threshold */
+		if (self->offline_timer_r1ms < self->offline_timeout_r1ms) {
+			self->offline_timer_r1ms += delta_time_ms;
+		} else {
+			self->online = false;
+		}
+
+		if (self->param_timer_r1ms < HUAPSU_PARAM_ID_SET_INTERVAL_MS) {
+			self->param_timer_r1ms += delta_time_ms;
+		}
+
+		if (self->data_timer_r1ms < HUAPSU_DATA_REQUEST_INTERVAL_MS) {
+			self->data_timer_r1ms += delta_time_ms;
+		}
+	}
+}
+#endif /* HUAPSU_NO_IMPL */
+
 #endif /* HUAPSU_H */

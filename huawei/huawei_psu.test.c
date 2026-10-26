@@ -9,16 +9,15 @@ static void huapsu_print_params(struct huapsu *self)
 	uint8_t iter;
 
 	for (iter = 0; iter < HUAPSU_MAX_ENTRIES; iter++) {
-		struct huapsu_val_entry *entry =
-		    huapsu_get_param_entry(self, iter);
+		struct huapsu_val_entry entry;
 
-		if (!entry) {
+		if (!huapsu_get_param_entry(self, iter, &entry)) {
 			continue;
 		}
 
-		printf("%30s: %f %s\n", entry->meta.name,
-		       (float)entry->value / (float)entry->bits_per_unit,
-		       entry->meta.unit);
+		printf("%30s: %f %s\n", entry.meta.name,
+		       (float)entry.value / (float)entry.bits_per_unit,
+		       entry.meta.unit);
 	}
 }
 
@@ -27,23 +26,88 @@ static void huapsu_print_data(struct huapsu *self)
 	uint8_t iter;
 
 	for (iter = 0; iter < HUAPSU_MAX_ENTRIES; iter++) {
-		struct huapsu_val_entry *entry =
-		    huapsu_get_data_entry(self, iter);
+		struct huapsu_val_entry entry;
 
-		if (!entry) {
+		if (!huapsu_get_data_value(self, iter, &entry)) {
 			continue;
 		}
 
-		printf("%30s: %f %s\n", entry->meta.name,
-		       (float)entry->value / (float)entry->bits_per_unit,
-		       entry->meta.unit);
+		printf("%30s: %f %s\n", entry.meta.name,
+		       (float)entry.value / (float)entry.bits_per_unit,
+		       entry.meta.unit);
 	}
 }
 
 static void huapsu_print_frame(struct huapsu_frame *frame)
 {
 	uint8_t iter;
-	for (iter)
+	printf("%08X: ", frame->id);
+	for (iter = 0; iter < frame->dlc; iter++) {
+		printf("%02X ", frame->data[iter]);
+	}
+	printf("\n");
+}
+
+static void huapsu_pop_params(struct huapsu *self, struct huapsu_frame *frame)
+{
+	/* 5 Params must be popped */
+	assert(huapsu_pop_tx_frame(self, frame) == true);
+	huapsu_print_frame(frame);
+
+	assert(huapsu_pop_tx_frame(self, frame) == true);
+	huapsu_print_frame(frame);
+
+	assert(huapsu_pop_tx_frame(self, frame) == true);
+	huapsu_print_frame(frame);
+
+	assert(huapsu_pop_tx_frame(self, frame) == true);
+	huapsu_print_frame(frame);
+
+	assert(huapsu_pop_tx_frame(self, frame) == true);
+	huapsu_print_frame(frame);
+}
+
+static void huapsu_pop_data(struct huapsu *self, struct huapsu_frame *frame)
+{
+	assert(huapsu_pop_tx_frame(self, frame) == true);
+	huapsu_print_frame(frame);
+}
+
+static void huapsu_test_autosend()
+{
+	struct huapsu_frame frame;
+	struct huapsu	    psu;
+
+	uint8_t iter;
+
+	huapsu_init(&psu, HUAPSU_HW_VARIANT_R33640G1);
+
+	assert(huapsu_set_param_value(
+	    &psu, HUAPSU_PARAM_ID_ONLINE_OUTPUT_VOLTAGE_V, 350 * 1024));
+	assert(huapsu_set_param_value(
+	    &psu, HUAPSU_PARAM_ID_OFFLINE_OUTPUT_VOLTAGE_V, 350 * 1024));
+	assert(huapsu_set_param_value(
+	    &psu, HUAPSU_PARAM_ID_OVERVOLTAGE_PROTECTION_V, 400 * 1024));
+	assert(huapsu_set_param_value(
+	    &psu, HUAPSU_PARAM_ID_ONLINE_CURRENT_LIMIT_RATIO, 512));
+	assert(huapsu_set_param_value(
+	    &psu, HUAPSU_PARAM_ID_OFFLINE_CURRENT_LIMIT_RATIO, 512));
+
+	/* Bounded loop to prevent deadlock */
+	for (iter = 0U; iter < 10U; iter++) {
+		if (!huapsu_is_busy(&psu)) {
+			break;
+		}
+
+		if (huapsu_step(&psu) == HUAPSU_EVENT_REQ_TIME) {
+			huapsu_update_timers(&psu, 1);
+		}
+	}
+
+	huapsu_pop_params(&psu, &frame);
+	huapsu_pop_data(&psu, &frame);
+
+	assert(huapsu_pop_tx_frame(&psu, &frame) == false);
 }
 
 int main()
@@ -54,6 +118,8 @@ int main()
 
 	huapsu_init(&psu, HUAPSU_HW_VARIANT_R33640G1);
 
+	/* huapsu_pop_params(&psu, &frame); */
+	huapsu_pop_data(&psu, &frame);
 	assert(huapsu_pop_tx_frame(&psu, &frame) == false);
 
 	for (i = 0; i < 0xFFU; i++) {
@@ -68,8 +134,7 @@ int main()
 		frame.data[6] = (uint8_t)((test_val >> 8U) & 0xFFU);
 		frame.data[7] = (uint8_t)((test_val >> 0U) & 0xFFU);
 
-		huapsu_set_param(&psu, huapsu_get_param_entry(&psu, i),
-				 test_val);
+		(void)huapsu_set_param_value(&psu, i, (int32_t)test_val);
 
 		if (huapsu_parse_data_frame(&psu, &frame) == false &&
 		    psu.err_code == HUAPSU_ERR_INVALID_DATA_ID) {
@@ -79,17 +144,13 @@ int main()
 		}
 	}
 
-	/* 5 Params must be popped */
-	assert(huapsu_pop_tx_frame(&psu, &frame) == true);
-	assert(huapsu_pop_tx_frame(&psu, &frame) == true);
-	assert(huapsu_pop_tx_frame(&psu, &frame) == true);
-	assert(huapsu_pop_tx_frame(&psu, &frame) == true);
-	assert(huapsu_pop_tx_frame(&psu, &frame) == true);
-
+	huapsu_pop_params(&psu, &frame);
 	assert(huapsu_pop_tx_frame(&psu, &frame) == false);
 
 	huapsu_print_params(&psu);
 	huapsu_print_data(&psu);
+
+	huapsu_test_autosend();
 
 	return 0;
 }
