@@ -35,6 +35,7 @@
 #define HUAPSU_MAX_TX_FRAMES 8U
 #define HUAPSU_DATA_REQUEST_INTERVAL_MS 100U
 #define HUAPSU_PARAM_ID_SET_INTERVAL_MS 1000U
+#define HUAPSU_DEFAULT_OFFLINE_TIMEOUT_MS 60000U
 #define HUAPSU_MAX_ENTRIES 0xFFU
 
 /******************************************************************************
@@ -71,8 +72,8 @@ struct huapsu_id_range {
 };
 
 struct huapsu_meta {
-	char *name;
-	char *unit;
+	const char *name;
+	const char *unit;
 };
 
 struct huapsu_val_entry {
@@ -233,10 +234,11 @@ enum huapsu_hw_variant {
 };
 
 enum huapsu_state {
-	HUAPSU_STATE_YIELD, /**< Give other tasks control. */
-	HUAPSU_STATE_RX,    /**< Receiving messages. */
-	HUAPSU_STATE_TX,    /**< Sending messages. */
-	HUAPSU_STATE_TIMERS /**< Updating timers. */
+	HUAPSU_STATE_YIELD,	   /**< Give other tasks control. */
+	HUAPSU_STATE_RX,	   /**< Receiving messages. */
+	HUAPSU_STATE_TX,	   /**< Sending messages. */
+	HUAPSU_STATE_CHECK_STATUS, /**< Self-check. */
+	HUAPSU_STATE_TIMERS	   /**< Updating timers. */
 };
 
 enum huapsu_err {
@@ -248,10 +250,12 @@ enum huapsu_err {
 };
 
 enum huapsu_event {
-	HUAPSU_EVENT_NONE,     /**< No events emited. */
-	HUAPSU_EVENT_REQ_TIME, /**< Timers update requested. */
-	HUAPSU_EVENT_MESSAGE,  /**< New message arrived. */
-	HUAPSU_EVENT_ERROR     /**< Some error has occured. */
+	HUAPSU_EVENT_NONE,	    /**< No events emited. */
+	HUAPSU_EVENT_REQ_TIME,	    /**< Timers update requested. */
+	/* HUAPSU_EVENT_MESSAGE, */ /*< New message arrived. */
+	HUAPSU_EVENT_ONLINE,	    /**< Online status message. */
+	HUAPSU_EVENT_OFFLINE,	    /**< Offline status message. */
+	HUAPSU_EVENT_ERROR	    /**< Some error has occured. */
 };
 
 /******************************************************************************
@@ -286,7 +290,6 @@ struct huapsu {
 	uint8_t param_tx_count;
 
 	bool online; /**< PSU is reported to be online. */
-	bool busy;   /**< Should not yield. */
 
 	/* Timers */
 	/** How long are we allowed to stay offline. */
@@ -317,8 +320,12 @@ void huapsu_init(struct huapsu *self, const enum huapsu_hw_variant variant)
 	uint8_t	       iter;
 	const uint16_t default_resolution = 1024U;
 
+#ifdef __cplusplus
+	const struct huapsu _self = {};
+#else
 	const struct huapsu _self = {0};
-	*self			  = _self;
+#endif
+	*self = _self;
 
 	switch (variant) {
 	case HUAPSU_HW_VARIANT_R33640G1:
@@ -336,8 +343,9 @@ void huapsu_init(struct huapsu *self, const enum huapsu_hw_variant variant)
 	self->rx_frame.dlc = -1; /* Indicates that there is no frame. */
 
 	/* Set timers to their max interval, so they fire immediately. */
-	self->data_timer_r1ms  = HUAPSU_DATA_REQUEST_INTERVAL_MS;
-	self->param_timer_r1ms = HUAPSU_PARAM_ID_SET_INTERVAL_MS;
+	self->offline_timeout_r1ms = HUAPSU_DEFAULT_OFFLINE_TIMEOUT_MS;
+	self->data_timer_r1ms	   = HUAPSU_DATA_REQUEST_INTERVAL_MS;
+	self->param_timer_r1ms	   = HUAPSU_PARAM_ID_SET_INTERVAL_MS;
 
 	/* Set common resolution for params */
 	for (iter = 0; iter < (uint8_t)HUAPSU_PARAM_ID_COUNT; iter++) {
@@ -399,16 +407,19 @@ bool huapsu_set_param_value(
 		struct huapsu_val_entry *entry = &self->param_entries[slot];
 
 		/* Add this to param to the TX queue.
-		 * This can be done only once. Until frame is popped.
-		 */
-		if (!entry->dirty) {
+		 * It will not be added into queue if it's the same value,
+		 * or if the value has never been added at the first place.
+		 * TODO clear dirty flags if goes offline.
+		 * TODO verify if frame has been received successfully.
+		 * TODO clear dirty flag if there was no success. */
+		if (!entry->dirty || (entry->value != value)) {
 			self->param_tx_queue[self->param_tx_count] = slot;
 			self->param_tx_count++;
-		}
 
-		entry->dirty = true;
-		entry->value = value;
-		success	     = true;
+			entry->dirty = true;
+			entry->value = value;
+			success	     = true;
+		}
 	}
 
 	return success;
@@ -438,6 +449,9 @@ uint8_t huapsu_step(struct huapsu *self);
 
 /** FSM is busy and shall not be interrupted by anything for safety reasons. */
 bool huapsu_is_busy(struct huapsu *self);
+
+/** FSM is ready to be interrupted. (inverse of huapsu_is_busy) */
+bool huapsu_yield(struct huapsu *self);
 
 #ifndef HUAPSU_NO_IMPL
 void huapsu_record_error(struct huapsu *self, const uint8_t err_code)
@@ -572,7 +586,6 @@ bool huapsu_parse_input_frame(struct huapsu		*self,
 uint8_t huapsu_state_yield(struct huapsu *self)
 {
 	self->state = HUAPSU_STATE_RX;
-	self->busy  = true;
 	return HUAPSU_EVENT_NONE;
 }
 
@@ -584,6 +597,10 @@ uint8_t huapsu_state_rx(struct huapsu *self)
 		if (!huapsu_parse_input_frame(self, &self->rx_frame)) {
 			event = HUAPSU_EVENT_ERROR;
 		} else {
+			if (!self->online) {
+				event = HUAPSU_EVENT_ONLINE;
+			}
+
 			self->online		 = true;
 			self->offline_timer_r1ms = 0U;
 		}
@@ -602,6 +619,21 @@ uint8_t huapsu_state_tx(struct huapsu *self)
 {
 	enum huapsu_event event = HUAPSU_EVENT_NONE;
 
+	self->state = HUAPSU_STATE_CHECK_STATUS;
+
+	return event;
+}
+
+uint8_t huapsu_state_check_status(struct huapsu *self)
+{
+	enum huapsu_event event = HUAPSU_EVENT_NONE;
+
+	if (self->online &&
+	    (self->offline_timer_r1ms >= self->offline_timeout_r1ms)) {
+		event	     = HUAPSU_EVENT_OFFLINE;
+		self->online = false;
+	}
+
 	self->state = HUAPSU_STATE_TIMERS;
 
 	return event;
@@ -616,7 +648,7 @@ uint8_t huapsu_state_timers(struct huapsu *self)
 uint8_t huapsu_step(struct huapsu *self)
 {
 	/* By default we yield, unless more things left to do */
-	enum huapsu_event event = HUAPSU_EVENT_NONE;
+	uint8_t event = HUAPSU_EVENT_NONE;
 
 	/* Clear all errors before update */
 	self->err_code = HUAPSU_ERR_NONE;
@@ -634,6 +666,10 @@ uint8_t huapsu_step(struct huapsu *self)
 		event = huapsu_state_tx(self);
 		break;
 
+	case HUAPSU_STATE_CHECK_STATUS:
+		event = huapsu_state_check_status(self);
+		break;
+
 	case HUAPSU_STATE_TIMERS:
 		event = huapsu_state_timers(self);
 		break;
@@ -645,7 +681,11 @@ uint8_t huapsu_step(struct huapsu *self)
 	return event;
 }
 
-bool huapsu_is_busy(struct huapsu *self) { return self->busy; }
+bool huapsu_is_busy(struct huapsu *self)
+{
+	return self->state != (uint8_t)HUAPSU_STATE_YIELD;
+}
+bool huapsu_yield(struct huapsu *self) { return (bool)!huapsu_is_busy(self); }
 #endif /* HUAPSU_NO_IMPL */
 
 /******************************************************************************
@@ -746,24 +786,24 @@ bool huapsu_pop_tx_frame(struct huapsu *self, struct huapsu_frame *frame)
 
 void huapsu_update_timers(struct huapsu *self, const uint32_t delta_time_ms)
 {
-	if (self->state != (uint8_t)HUAPSU_STATE_TIMERS) {
-		/* Invalid state. TODO exception */
-	} else {
-		/* Increment offline timer, until it reached max
-		 * threshold */
-		if (self->offline_timer_r1ms < self->offline_timeout_r1ms) {
-			self->offline_timer_r1ms += delta_time_ms;
-		} else {
-			self->online = false;
-		}
+	/* TODO fix bug. upon HUAPSU_EVENT_REQ_TIME state is changed
+	 * to HUAPSU_STATE_YIELD and thus this condition is never valid.
+	 * HOTFIX. I've just removed this check for a moment. */
+	/* if (self->state != (uint8_t)HUAPSU_STATE_TIMERS) { */
+	/* Invalid state. TODO exception */
+	/* } else { */
 
-		if (self->param_timer_r1ms < HUAPSU_PARAM_ID_SET_INTERVAL_MS) {
-			self->param_timer_r1ms += delta_time_ms;
-		}
+	/* Increment offline timer, until it reached max threshold */
+	if (self->offline_timer_r1ms < self->offline_timeout_r1ms) {
+		self->offline_timer_r1ms += delta_time_ms;
+	}
 
-		if (self->data_timer_r1ms < HUAPSU_DATA_REQUEST_INTERVAL_MS) {
-			self->data_timer_r1ms += delta_time_ms;
-		}
+	if (self->param_timer_r1ms < HUAPSU_PARAM_ID_SET_INTERVAL_MS) {
+		self->param_timer_r1ms += delta_time_ms;
+	}
+
+	if (self->data_timer_r1ms < HUAPSU_DATA_REQUEST_INTERVAL_MS) {
+		self->data_timer_r1ms += delta_time_ms;
 	}
 }
 #endif /* HUAPSU_NO_IMPL */

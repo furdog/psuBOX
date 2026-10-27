@@ -25,7 +25,7 @@ trap cleanup_and_exit EXIT
 ###############################################################################
 COMPILER="$PWD"/tools/arduino-cli
 
-SERIAL_PORT=COM3
+SERIAL_PORT=COM2
 MONITOR_BAUD=921600
 export OTA_IP="10.10.10.10"
 
@@ -59,7 +59,7 @@ compile() {
 	mkdir -p build
 
 	rm build/* 2> /dev/null || true # Clean build
-	
+
 
 	echo "Initial setup..."
 
@@ -104,6 +104,8 @@ compile() {
 		#cp ui/lv_font_montserrat_14_ukrainian.c build/
 		cp ui/psu_box_ui.h build/
 		cp fan_ctl/fan_ctl.h build/
+		cp bindings/*.h build/
+		cp huawei/*h build/
 	fi
 	cp *.csv build/
 

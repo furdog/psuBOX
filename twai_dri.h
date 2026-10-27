@@ -1,5 +1,6 @@
 #include "driver/gpio.h"
 #include "driver/twai.h"
+#include <cstdint>
 
 /******************************************************************************
  * ESP32 TWAI
@@ -26,7 +27,7 @@ struct esp32_twai_frame {
 static twai_handle_t twai_bus_0;
 static twai_handle_t twai_bus_1;
 
-void esp32_twai_init(twai_handle_t *bus)
+void esp32_twai_init(twai_handle_t *bus, uint16_t baud_kbps)
 {
 	esp_err_t code;
 
@@ -42,9 +43,16 @@ void esp32_twai_init(twai_handle_t *bus)
 
 	twai_general_config_t g_config =
 		TWAI_GENERAL_CONFIG_DEFAULT(bus_tx, bus_rx, TWAI_MODE_NORMAL);
-	twai_timing_config_t t_config = TWAI_TIMING_CONFIG_500KBITS  ();
+
+	twai_timing_config_t t_config;
+	if (baud_kbps == 500) {
+		t_config = TWAI_TIMING_CONFIG_500KBITS();
+	} else if (baud_kbps == 125) {
+		t_config = TWAI_TIMING_CONFIG_125KBITS();
+	}
+
 	twai_filter_config_t f_config = TWAI_FILTER_CONFIG_ACCEPT_ALL();
-	
+
 	/* g_config.tx_queue_len = 10; */
 
 	// Install driver for TWAI bus 0
@@ -77,7 +85,8 @@ void _esp32_twai_kill(twai_handle_t *bus)
 	twai_driver_uninstall_v2(*bus);
 }
 
-void _esp32_twai_send(twai_handle_t *bus, struct esp32_twai_frame *frame)
+void _esp32_twai_send(twai_handle_t *bus, struct esp32_twai_frame *frame,
+		      bool ext)
 {
 	assert(bus == &twai_bus_0 || bus == &twai_bus_1);
 
@@ -85,12 +94,12 @@ void _esp32_twai_send(twai_handle_t *bus, struct esp32_twai_frame *frame)
 
 	// Configure message to transmit
 	twai_message_t msg;
-		
+
 	// Message type and format settings
 	// Standard vs extended format
-	msg.extd = 0;
+	msg.extd = ext;
 
-	// Data vs RTR frame         
+	// Data vs RTR frame
 	msg.rtr  = 0;
 
 	// Whether the message is single shot (i.e., does not repeat on error)
@@ -101,7 +110,7 @@ void _esp32_twai_send(twai_handle_t *bus, struct esp32_twai_frame *frame)
 
 	// DLC is less or equal 8
 	msg.dlc_non_comp = 0;
-		    
+
 	// Message ID and payload
 	msg.identifier       = frame->id;
 	msg.data_length_code = frame->len;
@@ -123,7 +132,7 @@ bool _esp32_twai_recv(twai_handle_t *bus, struct esp32_twai_frame *frame)
 
 	assert(bus == &twai_bus_0 || bus == &twai_bus_1);
 	assert(frame != NULL);
-						
+
 	twai_message_t msg;
 
 	if (twai_receive_v2(*bus, &msg, 0) == ESP_OK &&
@@ -137,13 +146,13 @@ bool _esp32_twai_recv(twai_handle_t *bus, struct esp32_twai_frame *frame)
 				frame->data[i] = msg.data[i];
 			}
 		}
-		
+
 		frame->len = i;
 		has_message = true;
 	} else {
 		has_message = false;
 	}
-	
+
 	return has_message;
 }
 
@@ -176,12 +185,12 @@ void esp32_twai_update()
 	}
 }
 
-bool esp32_twai_send_frame(uint8_t bus_id, struct esp32_twai_frame *frame)
-{	
+bool esp32_twai_send_frame(uint8_t bus_id, struct esp32_twai_frame *frame, bool ext)
+{
 	if (bus_id == 0) {
-		_esp32_twai_send(&twai_bus_0, frame);
+		_esp32_twai_send(&twai_bus_0, frame, ext);
 	} else if (bus_id == 1) {
-		_esp32_twai_send(&twai_bus_1, frame);
+		_esp32_twai_send(&twai_bus_1, frame, ext);
 	} else {}
 
 	return true;
@@ -198,6 +207,6 @@ bool esp32_twai_recv_frame(uint8_t bus_id, struct esp32_twai_frame *frame)
 	} else {
 		has_frame = false;
 	}
-	
+
 	return has_frame;
 }

@@ -73,12 +73,26 @@ static void huapsu_pop_data(struct huapsu *self, struct huapsu_frame *frame)
 	huapsu_print_frame(frame);
 }
 
+static void huapsu_loop(struct huapsu *self)
+{
+	uint8_t iter;
+
+	/* Bounded loop to prevent deadlock */
+	for (iter = 0U; iter < 10U; iter++) {
+		if (huapsu_step(self) == HUAPSU_EVENT_REQ_TIME) {
+			huapsu_update_timers(self, 1);
+		}
+
+		if (huapsu_yield(self)) {
+			break;
+		}
+	}
+}
+
 static void huapsu_test_autosend()
 {
 	struct huapsu_frame frame;
 	struct huapsu	    psu;
-
-	uint8_t iter;
 
 	huapsu_init(&psu, HUAPSU_HW_VARIANT_R33640G1);
 
@@ -93,21 +107,26 @@ static void huapsu_test_autosend()
 	assert(huapsu_set_param_value(
 	    &psu, HUAPSU_PARAM_ID_OFFLINE_CURRENT_LIMIT_RATIO, 512));
 
-	/* Bounded loop to prevent deadlock */
-	for (iter = 0U; iter < 10U; iter++) {
-		if (!huapsu_is_busy(&psu)) {
-			break;
-		}
-
-		if (huapsu_step(&psu) == HUAPSU_EVENT_REQ_TIME) {
-			huapsu_update_timers(&psu, 1);
-		}
-	}
+	huapsu_loop(&psu);
 
 	huapsu_pop_params(&psu, &frame);
 	huapsu_pop_data(&psu, &frame);
 
 	assert(huapsu_pop_tx_frame(&psu, &frame) == false);
+
+	/* Must fail on same value. */
+	assert(!huapsu_set_param_value(
+	    &psu, HUAPSU_PARAM_ID_OFFLINE_CURRENT_LIMIT_RATIO, 512));
+
+	/* Must success on different value. */
+	assert(huapsu_set_param_value(
+	    &psu, HUAPSU_PARAM_ID_OFFLINE_CURRENT_LIMIT_RATIO, 513));
+
+	huapsu_loop(&psu);
+	printf("data_timer_r1ms: %u\n", psu.data_timer_r1ms);
+
+	huapsu_loop(&psu);
+	printf("data_timer_r1ms: %u\n", psu.data_timer_r1ms);
 }
 
 int main()
