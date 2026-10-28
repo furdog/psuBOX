@@ -1,8 +1,9 @@
+#include <stdio.h>
+#define HUAPSU_LOG(a) printf a
 #include "huawei_psu.h"
 
 #include <assert.h>
 #include <stdint.h>
-#include <stdio.h>
 
 static void huapsu_print_params(struct huapsu *self)
 {
@@ -36,16 +37,6 @@ static void huapsu_print_data(struct huapsu *self)
 		       (float)entry.value / (float)entry.bits_per_unit,
 		       entry.meta.unit);
 	}
-}
-
-static void huapsu_print_frame(struct huapsu_frame *frame)
-{
-	uint8_t iter;
-	printf("%08X: ", frame->id);
-	for (iter = 0; iter < frame->dlc; iter++) {
-		printf("%02X ", frame->data[iter]);
-	}
-	printf("\n");
 }
 
 static void huapsu_pop_params(struct huapsu *self, struct huapsu_frame *frame)
@@ -142,7 +133,7 @@ int main()
 	assert(huapsu_pop_tx_frame(&psu, &frame) == false);
 
 	printf("data_entries_recv_counter: %u\n",
-		psu.data_entries_recv_counter);
+	       psu.data_entries_recv_counter);
 	assert(!huapsu_has_received_all_data(&psu));
 
 	for (i = 0; i < 0xFFU; i++) {
@@ -168,7 +159,7 @@ int main()
 	}
 
 	printf("data_entries_recv_counter: %u\n",
-		psu.data_entries_recv_counter);
+	       psu.data_entries_recv_counter);
 	assert(huapsu_has_received_all_data(&psu));
 
 	huapsu_pop_params(&psu, &frame);

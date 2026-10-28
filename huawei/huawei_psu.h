@@ -39,6 +39,10 @@
 #define HUAPSU_DEFAULT_OFFLINE_TIMEOUT_MS 60000U
 #define HUAPSU_MAX_ENTRIES 0xFFU
 
+#ifndef HUAPSU_LOG
+#define HUAPSU_LOG(a)
+#endif
+
 /******************************************************************************
  * HARDWARE INTERFACE (agnostic)
  *****************************************************************************/
@@ -239,7 +243,7 @@ enum huapsu_hw_variant {
  *  Every stage is responsible for exactly one atomic action
  *  (transmission, reception, status report, etc).
  *
- * TODO set prefix to HUAPSU_SR_? */
+ * TODO set prefix to HUAPSU_SR_? or HUAPSH_CTX_? */
 enum huapsu_state {
 	HUAPSU_STATE_RX,	   /**< Receiving messages. */
 	HUAPSU_STATE_TX,	   /**< Sending messages. */
@@ -311,10 +315,11 @@ struct huapsu {
 	uint32_t param_timer_r1ms; /**< Time passed since last param update. */
 
 	/* Diagnostics */
-	uint8_t err_code;
-	uint8_t err_state;
-	uint8_t last_msg_id;
-	uint8_t last_answ_code;
+	uint32_t err_delta_r1ms;
+	uint8_t	 err_code;
+	uint8_t	 err_state;
+	uint8_t	 last_msg_id;
+	uint8_t	 last_answ_code;
 };
 
 /** Initializes main instance. Hardware variant must be specified. */
@@ -470,10 +475,37 @@ bool huapsu_is_busy(struct huapsu *self);
 bool huapsu_yield(struct huapsu *self);
 
 #ifndef HUAPSU_NO_IMPL
-void huapsu_record_error(struct huapsu *self, const uint8_t err_code)
+void huapsu_print(struct huapsu *self, const char *msg)
+{
+	(void)self; /* May be unused */
+	(void)msg;  /* May be unused */
+
+	HUAPSU_LOG(("[+%04ums] state: %u: %s\n", self->err_delta_r1ms,
+		    self->state, msg));
+}
+
+void huapsu_print_frame(const struct huapsu_frame *frame)
+{
+	int8_t iter;
+
+	HUAPSU_LOG(("%08X: ", frame->id));
+	for (iter = 0; iter < frame->dlc; iter++) {
+		HUAPSU_LOG(("%02X ", frame->data[iter]));
+	}
+	HUAPSU_LOG(("\n"));
+}
+
+void huapsu_frame_error(struct huapsu *self, const uint8_t err_code,
+			const struct huapsu_frame *frame)
 {
 	self->err_code	= err_code;
 	self->err_state = self->state;
+
+	HUAPSU_LOG(("[+%04ums] Frame error! State: %u, code: %u, frame: ",
+		    self->err_delta_r1ms, err_code, self->state));
+	huapsu_print_frame(frame);
+
+	self->err_delta_r1ms = 0U;
 }
 
 int32_t huapsu_decode_value(const struct huapsu_frame *frame)
@@ -529,10 +561,11 @@ bool huapsu_parse_param_frame(struct huapsu		*self,
 		if (slot != (uint8_t)-1) {
 			self->param_entries[slot].value = value;
 		} else {
-			huapsu_record_error(self, HUAPSU_ERR_INVALID_DATA_ID);
+			huapsu_frame_error(self, HUAPSU_ERR_INVALID_DATA_ID,
+					   frame);
 		}
 	} else {
-		huapsu_record_error(self, HUAPSU_ERR_INVALID_ANSWER);
+		huapsu_frame_error(self, HUAPSU_ERR_INVALID_ANSWER, frame);
 	}
 
 	return success;
@@ -572,11 +605,12 @@ bool huapsu_parse_data_frame(struct huapsu	       *self,
 		if (slot != (uint8_t)-1) {
 			huapsu_receive_data(self, slot, frame);
 		} else {
-			huapsu_record_error(self, HUAPSU_ERR_INVALID_DATA_ID);
+			huapsu_frame_error(self, HUAPSU_ERR_INVALID_DATA_ID,
+					   frame);
 			success = false;
 		}
 	} else {
-		huapsu_record_error(self, HUAPSU_ERR_INVALID_ANSWER);
+		huapsu_frame_error(self, HUAPSU_ERR_INVALID_ANSWER, frame);
 	}
 
 	return success;
@@ -592,7 +626,8 @@ bool huapsu_parse_input_frame(struct huapsu		*self,
 		if (frame->dlc == (int8_t)HUAPSU_FRAME_MAX_LEN) {
 			success = huapsu_parse_data_frame(self, frame);
 		} else {
-			huapsu_record_error(self, HUAPSU_ERR_INVALID_DLC);
+			huapsu_frame_error(self, HUAPSU_ERR_INVALID_DLC,
+					   frame);
 		}
 		break;
 
@@ -600,12 +635,13 @@ bool huapsu_parse_input_frame(struct huapsu		*self,
 		if (frame->dlc == (int8_t)HUAPSU_FRAME_MAX_LEN) {
 			success = huapsu_parse_param_frame(self, frame);
 		} else {
-			huapsu_record_error(self, HUAPSU_ERR_INVALID_DLC);
+			huapsu_frame_error(self, HUAPSU_ERR_INVALID_DLC,
+					   frame);
 		}
 		break;
 
 	default:
-		huapsu_record_error(self, HUAPSU_ERR_INVALID_ID);
+		huapsu_frame_error(self, HUAPSU_ERR_INVALID_ID, frame);
 		break;
 	}
 
@@ -623,6 +659,8 @@ uint8_t huapsu_state_rx(struct huapsu *self)
 	enum huapsu_event event = HUAPSU_EVENT_NONE;
 
 	if (self->rx_frame.dlc >= 0) {
+		huapsu_print(self, "msg arrived");
+
 		if (!huapsu_parse_input_frame(self, &self->rx_frame)) {
 			event = HUAPSU_EVENT_ERROR;
 		} else {
@@ -685,10 +723,14 @@ uint8_t huapsu_state_check_status(struct huapsu *self)
 
 		/* Also set recv counter to 0 */
 		self->data_entries_recv_counter = 0U;
+
+		huapsu_print(self, "device offline");
 	} else if (!self->online &&
 		   (self->offline_timer_r1ms < self->offline_timeout_r1ms)) {
 		event	     = HUAPSU_EVENT_ONLINE;
 		self->online = true;
+
+		huapsu_print(self, "device online");
 	} else {
 	}
 
@@ -846,7 +888,8 @@ bool huapsu_pop_tx_frame(struct huapsu *self, struct huapsu_frame *frame)
 
 void huapsu_update_timers(struct huapsu *self, const uint32_t delta_time_r1ms)
 {
-	self->delta_time_r1ms = delta_time_r1ms;
+	self->delta_time_r1ms  = delta_time_r1ms;
+	self->err_delta_r1ms  += delta_time_r1ms;
 }
 #endif /* HUAPSU_NO_IMPL */
 
