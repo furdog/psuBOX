@@ -30,6 +30,9 @@ bool huapsu_set_param_value(struct huapsu *self, uint8_t param_id,
 bool huapsu_get_data_value(struct huapsu *self, uint8_t data_id,
 			   struct huapsu_val_entry *entry);
 
+/** Returns true if all data fields has been received. */
+bool huapsu_has_received_all_data(struct huapsu *self);
+
 /** Main fsm routine. Must be called in while loop until busy flag
  *  is set to true. */
 uint8_t huapsu_step(struct huapsu *self);
@@ -52,7 +55,6 @@ bool huapsu_pop_tx_frame(struct huapsu *self, struct huapsu_frame *frame);
 /** Updates all internal timers. Should only be called on
     HUAPSU_EVENT_REQ_TIME event */
 void huapsu_update_timers(struct huapsu *self, uint32_t delta_time_ms);
-
 ```
 
 # Example

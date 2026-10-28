@@ -141,6 +141,10 @@ int main()
 	huapsu_pop_data(&psu, &frame);
 	assert(huapsu_pop_tx_frame(&psu, &frame) == false);
 
+	printf("data_entries_recv_counter: %u\n",
+		psu.data_entries_recv_counter);
+	assert(!huapsu_has_received_all_data(&psu));
+
 	for (i = 0; i < 0xFFU; i++) {
 		uint32_t test_val = (uint32_t)i * 1024;
 
@@ -162,6 +166,10 @@ int main()
 			/* printf("index IN range:     %u\n", i); */
 		}
 	}
+
+	printf("data_entries_recv_counter: %u\n",
+		psu.data_entries_recv_counter);
+	assert(huapsu_has_received_all_data(&psu));
 
 	huapsu_pop_params(&psu, &frame);
 	assert(huapsu_pop_tx_frame(&psu, &frame) == false);
